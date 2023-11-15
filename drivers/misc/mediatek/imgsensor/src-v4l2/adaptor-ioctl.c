@@ -11,7 +11,7 @@
 #include "adaptor-fsync-ctrls.h"
 #include "adaptor-i2c.h"
 
-#define GAIN_TBL_SIZE 4096
+#define GAIN_TBL_SIZE 32768
 #define sd_to_ctx(__sd) container_of(__sd, struct adaptor_ctx, sd)
 
 #define F_READ 1
