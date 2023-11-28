@@ -71,6 +71,10 @@ static int B_ceiling_min;
 static int L_min_cap_enable;
 static int B_min_cap_enable;
 
+static int ceiling_min_B;
+static int ceiling_min_M;
+static int ceiling_min_enable;
+
 module_param(cfp_onoff, int, 0644);
 module_param(cfp_polling_ms, int, 0644);
 module_param(cfp_up_time, int, 0644);
@@ -81,6 +85,9 @@ module_param(L_ceiling_min, int, 0644);
 module_param(B_ceiling_min, int, 0644);
 module_param(L_min_cap_enable, int, 0644);
 module_param(B_min_cap_enable, int, 0644);
+module_param(ceiling_min_B, int, 0644);
+module_param(ceiling_min_M, int, 0644);
+module_param(ceiling_min_enable, int, 0644);
 
 static int cfp_cur_up_time;
 static int cfp_cur_down_time;
@@ -479,12 +486,18 @@ int fbt_set_cpu_freq_ceiling(int num, int *freq)
 	if (B_min_cap_enable && B_ceiling_min != 0 &&
 		freq[1] >= 0 && freq[1] < B_ceiling_min)
 		freq[1] = B_ceiling_min;
+	if (policy_num >= 2 && ceiling_min_enable) {
+		if (freq[policy_num-2] >=0 && freq[policy_num-2] < ceiling_min_M)
+			freq[policy_num-2] = ceiling_min_M;
+		if (freq[policy_num-1] >=0 && freq[policy_num-1] < ceiling_min_B)
+			freq[policy_num-1] = ceiling_min_B;
+	}
 
 	mutex_lock(&cpu_ctrl_lock);
 
 	for (i = 0; i < policy_num && i < num; i++) {
 #if DEBUG_LOG
-		pr_info("%s i:%d, freq:%d\n", __func__, i, freq[i]);
+		pr_info("%s Cluster i:%d, freq:%d, num:%d\n", __func__, i, freq[i], num);
 #endif
 		if (fbt_last_ceiling[i] != freq[i]) {
 			need_update = 1;
@@ -628,6 +641,9 @@ int fbt_cpu_ctrl_init(void)
 	B_ceiling_min = 0;
 	L_min_cap_enable = 1;
 	B_min_cap_enable = 1;
+	ceiling_min_B= 0;
+	ceiling_min_M = 0;
+	ceiling_min_enable = 0;
 
 	/* cfp request */
 	for (i = 0; i < CFP_KIR_MAX_NUM; i++) {
