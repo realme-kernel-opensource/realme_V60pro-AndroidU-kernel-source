@@ -213,7 +213,7 @@ static bool is_layer_across_each_pipe(struct drm_crtc *crtc,
 	dst_w = layer_info->dst_width;
 
 	if ((dst_x + dst_w <= disp_w / 2) ||
-	    (dst_x > disp_w / 2))
+	    (dst_x >= disp_w / 2))
 		return false;
 
 	return true;
