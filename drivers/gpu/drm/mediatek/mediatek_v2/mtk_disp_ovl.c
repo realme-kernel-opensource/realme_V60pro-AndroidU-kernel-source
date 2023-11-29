@@ -956,6 +956,12 @@ static irqreturn_t mtk_disp_ovl_irq_handler(int irq, void *dev_id)
 		DDPIRQ("[IRQ] %s: frame done!\n", mtk_dump_comp_str(ovl));
 
 		dump_ovl_layer_trace(mtk_crtc, ovl);
+
+		if ((ovl->id == DDP_COMPONENT_OVL0_2L) &&
+			mtk_crtc && mtk_crtc_is_frame_trigger_mode(&mtk_crtc->base) &&
+			drv_priv && drv_priv->data && (drv_priv->data->mmsys_id == MMSYS_MT6985) &&
+			mtk_crtc->esd_ctx)
+			atomic_set(&mtk_crtc->esd_ctx->target_time, 0);
 	}
 	if ((ovl->id == DDP_COMPONENT_OVL0_2L) && (val & (1 << 15))) {
 		DDPIRQ("[IRQ] %s: OVL target line\n", mtk_dump_comp_str(ovl));
