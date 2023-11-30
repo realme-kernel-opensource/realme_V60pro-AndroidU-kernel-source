@@ -768,4 +768,7 @@ enum mtk_cam_sensor_pm_ops {
 #define V4L2_CID_UPDATE_SOF_CNT \
 	(V4L2_CID_USER_MTK_SENINF_BASE + 7)
 
+#define V4L2_CID_GET_CSI2_IRQ_STATUS \
+	(V4L2_CID_USER_MTK_SENINF_BASE + 8)
+
 #endif /* __MTK_CAMERA_V4l2_CONTROLS_H */

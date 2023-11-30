@@ -239,6 +239,7 @@ struct seninf_ctx {
 	unsigned int size_err_flag;
 	unsigned int dbg_timeout;
 	unsigned int dbg_last_dump_req;
+	unsigned int esd_status_flag;
 
 	/* cammux switch debug element */
 	struct mtk_cam_seninf_mux_param *dbg_chmux_param;
