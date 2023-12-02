@@ -772,7 +772,7 @@ s32 mml_drm_submit(struct mml_drm_ctx *ctx, struct mml_submit *submit,
 	void *cb_param)
 {
 	struct mml_frame_config *cfg;
-	struct mml_task *task;
+	struct mml_task *task = NULL;
 	s32 result;
 	u32 i;
 	struct fence_data fence = {0};
@@ -937,7 +937,7 @@ s32 mml_drm_submit(struct mml_drm_ctx *ctx, struct mml_submit *submit,
 			      &submit->buffer.src,
 			      "drm_mml_rdma");
 	if (result) {
-		mml_err("[drm]%s get dma buf fail", __func__);
+		mml_err("[drm]%s get src dma buf fail", __func__);
 		goto err_buf_exit;
 	}
 
@@ -957,7 +957,7 @@ s32 mml_drm_submit(struct mml_drm_ctx *ctx, struct mml_submit *submit,
 				      &submit->buffer.dest[i],
 				      "drm_mml_wrot");
 		if (result) {
-			mml_err("[drm]%s get dma buf fail", __func__);
+			mml_err("[drm]%s get dest %u dma buf fail", __func__, i);
 			goto err_buf_exit;
 		}
 	}
@@ -1001,6 +1001,8 @@ err_unlock_exit:
 err_buf_exit:
 	mml_trace_end();
 	mml_log("%s fail result %d", __func__, result);
+	if (task)
+		kref_put(&task->ref, task_move_to_destroy);
 	return result;
 }
 EXPORT_SYMBOL_GPL(mml_drm_submit);
