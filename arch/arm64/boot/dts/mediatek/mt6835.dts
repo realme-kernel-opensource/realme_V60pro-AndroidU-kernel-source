@@ -4536,7 +4536,7 @@
 			interconnect-num = <10>;
 			throughput-op-rate-thresh = <120>;
 			throughput-min = <218000000>;
-			throughput-normal-max = <416000000>;
+			throughput-normal-max = <546000000>;
 			profile-duration = <60 2000>;
 			profile-target = <15 25 30 50 60 90 120 150 180 240 480>;
 			max-op-rate-table =
