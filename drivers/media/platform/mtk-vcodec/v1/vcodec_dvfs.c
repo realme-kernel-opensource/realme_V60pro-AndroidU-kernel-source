@@ -372,7 +372,7 @@ u32 calc_freq(struct vcodec_inst *inst, struct mtk_vcodec_dev *dev)
 			mtk_v4l2_debug(6, "[VDVFS] VDEC w:%u x h:%u / 256 x oprate: %d x mb %u",
 				inst->width, inst->height, inst->op_rate, perf->cy_per_mb_1);
 		} else
-			freq = 100000000;
+			freq = dev->vdec_dvfs_params.normal_max_freq;
 
 		if (perf != 0 && inst->op_rate <= 0) {
 			/* Undefined priority + op_rate combination behavior, to be configurable */
