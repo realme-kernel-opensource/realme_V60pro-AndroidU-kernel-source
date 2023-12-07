@@ -4261,7 +4261,7 @@ void mtk_crtc_mode_switch_on_ap_config(struct mtk_drm_crtc *mtk_crtc,
 	mtk_crtc_pkt_create(&cmdq_handle, &mtk_crtc->base,
 				mtk_crtc->gce_obj.client[CLIENT_CFG]);
 
-	if (mtk_crtc->is_dual_pipe &&
+	if (mtk_crtc_ability_chk(mtk_crtc, ABILITY_PQ) && mtk_crtc->is_dual_pipe &&
 		mtk_drm_helper_get_opt(priv->helper_opt, MTK_DRM_OPT_TILE_OVERHEAD)) {
 		cfg.tile_overhead.is_support = true;
 		cfg.tile_overhead.left_in_width = cfg.w / 2;
@@ -4490,7 +4490,7 @@ void mtk_crtc_mode_switch_config(struct mtk_drm_crtc *mtk_crtc,
 
 	mtk_crtc_load_round_corner_pattern(&mtk_crtc->base, cmdq_handle);
 
-	if (mtk_crtc->is_dual_pipe &&
+	if (mtk_crtc_ability_chk(mtk_crtc, ABILITY_PQ) && mtk_crtc->is_dual_pipe &&
 		mtk_drm_helper_get_opt(priv->helper_opt, MTK_DRM_OPT_TILE_OVERHEAD)) {
 		cfg.tile_overhead.is_support = true;
 		cfg.tile_overhead.left_in_width = cfg.w / 2;
@@ -9051,7 +9051,7 @@ void mtk_crtc_config_default_path(struct mtk_drm_crtc *mtk_crtc)
 		return;
 	}
 
-	if (mtk_crtc->is_dual_pipe &&
+	if (mtk_crtc_ability_chk(mtk_crtc, ABILITY_PQ) && mtk_crtc->is_dual_pipe &&
 		mtk_drm_helper_get_opt(priv->helper_opt, MTK_DRM_OPT_TILE_OVERHEAD)) {
 		cfg.tile_overhead.is_support = true;
 		cfg.tile_overhead.left_in_width = cfg.w / 2;
@@ -10379,7 +10379,7 @@ void mtk_crtc_first_enable_ddp_config(struct mtk_drm_crtc *mtk_crtc)
 		mtk_crtc_enable_iommu_runtime(mtk_crtc, cmdq_handle);
 	}
 
-	if (mtk_crtc->is_dual_pipe &&
+	if (mtk_crtc_ability_chk(mtk_crtc, ABILITY_PQ) && mtk_crtc->is_dual_pipe &&
 		mtk_drm_helper_get_opt(priv->helper_opt, MTK_DRM_OPT_TILE_OVERHEAD)) {
 		cfg.tile_overhead.is_support = true;
 		cfg.tile_overhead.left_in_width = cfg.w / 2;

@@ -14574,6 +14574,13 @@ void mtk_ddp_insert_dsc_prim_MT6985(struct mtk_drm_crtc *mtk_crtc,
 void mtk_ddp_remove_dsc_ext_MT6985(struct mtk_drm_crtc *mtk_crtc,
 	struct cmdq_pkt *handle)
 {
+	unsigned int addr, value;
+
+	addr = MT6985_COMP_OUT_CROSSBAR1_MOUT_EN;
+	value = 0;
+
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, ~0);
 }
 
 void mtk_ddp_remove_dsc_prim_MT6985(struct mtk_drm_crtc *mtk_crtc,
