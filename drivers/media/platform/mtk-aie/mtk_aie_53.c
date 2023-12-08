@@ -1378,23 +1378,25 @@ static void mtk_aie_frame_done_worker(struct work_struct *work)
 	struct mtk_aie_req_work *req_work = (struct mtk_aie_req_work *)work;
 	struct mtk_aie_dev *fd = (struct mtk_aie_dev *)req_work->fd_dev;
 
-	switch (fd->aie_cfg->sel_mode) {
-	case FDMODE:
-		fd->reg_cfg.hw_result = readl(fd->fd_base + AIE_RESULT_0_REG);
-		fd->reg_cfg.hw_result1 = readl(fd->fd_base + AIE_RESULT_1_REG);
-		fd->drv_ops->get_fd_result(fd, fd->aie_cfg);
-	break;
-	case ATTRIBUTEMODE:
-		fd->drv_ops->get_attr_result(fd, fd->aie_cfg);
-	break;
-	case FLDMODE:
-		fd->drv_ops->get_fld_result(fd, fd->aie_cfg);
-	break;
-	default:
-	break;
-	}
+	if (fd->fd_stream_count > 0) {
+		switch (fd->aie_cfg->sel_mode) {
+		case FDMODE:
+			fd->reg_cfg.hw_result = readl(fd->fd_base + AIE_RESULT_0_REG);
+			fd->reg_cfg.hw_result1 = readl(fd->fd_base + AIE_RESULT_1_REG);
+			fd->drv_ops->get_fd_result(fd, fd->aie_cfg);
+		break;
+		case ATTRIBUTEMODE:
+			fd->drv_ops->get_attr_result(fd, fd->aie_cfg);
+		break;
+		case FLDMODE:
+			fd->drv_ops->get_fld_result(fd, fd->aie_cfg);
+		break;
+		default:
+		break;
+		}
 
-	mtk_aie_hw_done(fd, VB2_BUF_STATE_DONE);
+		mtk_aie_hw_done(fd, VB2_BUF_STATE_DONE);
+	}
 }
 
 static int mtk_aie_probe(struct platform_device *pdev)
