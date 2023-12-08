@@ -367,15 +367,20 @@ static void disp_c3d_config_sram(struct mtk_ddp_comp *comp)
 
 	// destroy used pkt and create new one
 	mtk_disp_c3d_create_gce_pkt(g_c3d_data->crtc, &c3d_sram_pkt);
-	mtk_disp_c3d_create_gce_pkt(g_c3d_data->crtc, &c3d1_sram_pkt);
-
 	C3DFLOW_LOG("c3d_sram_pkt: %d\n", c3d_sram_pkt == NULL ? 1 : 0);
-	C3DFLOW_LOG("c3d1_sram_pkt: %d\n", c3d1_sram_pkt == NULL ? 1 : 0);
-	if (c3d_sram_pkt == NULL || c3d1_sram_pkt == NULL)
-		return;
+	if (comp->mtk_crtc->is_dual_pipe) {
+		mtk_disp_c3d_create_gce_pkt(g_c3d_data->crtc, &c3d1_sram_pkt);
+		C3DFLOW_LOG("c3d1_sram_pkt: %d\n", c3d1_sram_pkt == NULL ? 1 : 0);
+	}
 
+	if (c3d_sram_pkt == NULL)
+		return;
+	if (comp->mtk_crtc->is_dual_pipe && c3d1_sram_pkt == NULL)
+		return;
 	c3d_sram_pkt->no_pool = true;
-	c3d1_sram_pkt->no_pool = true;
+	if (comp->mtk_crtc->is_dual_pipe) {
+		c3d1_sram_pkt->no_pool = true;
+	}
 
 	// Write 3D LUT to SRAM
 	if (!gPktReused) {
@@ -390,10 +395,12 @@ static void disp_c3d_config_sram(struct mtk_ddp_comp *comp)
 			cmdq_pkt_write_value_addr_reuse(c3d_sram_pkt, comp->regs_pa + C3D_SRAM_RW_IF_1,
 				write_value, ~0, &reuse_c3d0[sram_offset/4 * 2 + 1]);
 			// for right pipe
-			cmdq_pkt_write_value_addr_reuse(c3d1_sram_pkt, companion->regs_pa + C3D_SRAM_RW_IF_0,
-				sram_offset, ~0, &reuse_c3d1[sram_offset/4 * 2]);
-			cmdq_pkt_write_value_addr_reuse(c3d1_sram_pkt, companion->regs_pa + C3D_SRAM_RW_IF_1,
-				write_value, ~0, &reuse_c3d1[sram_offset/4 * 2 + 1]);
+			if (comp->mtk_crtc->is_dual_pipe) {
+				cmdq_pkt_write_value_addr_reuse(c3d1_sram_pkt, companion->regs_pa + C3D_SRAM_RW_IF_0,
+					sram_offset, ~0, &reuse_c3d1[sram_offset/4 * 2]);
+				cmdq_pkt_write_value_addr_reuse(c3d1_sram_pkt, companion->regs_pa + C3D_SRAM_RW_IF_1,
+					write_value, ~0, &reuse_c3d1[sram_offset/4 * 2 + 1]);
+			}
 
 			gPktReused = true;
 		}
@@ -404,12 +411,15 @@ static void disp_c3d_config_sram(struct mtk_ddp_comp *comp)
 			reuse_c3d0[sram_offset/4 * 2].val = sram_offset;
 			reuse_c3d0[sram_offset/4 * 2 + 1].val = cfg[sram_offset/4];
 			// for right pipe
-			reuse_c3d1[sram_offset/4 * 2].val = sram_offset;
-			reuse_c3d1[sram_offset/4 * 2 + 1].val = cfg[sram_offset/4];
+			if (comp->mtk_crtc->is_dual_pipe) {
+				reuse_c3d1[sram_offset/4 * 2].val = sram_offset;
+				reuse_c3d1[sram_offset/4 * 2 + 1].val = cfg[sram_offset/4];
+			}
 		}
 
 		cmdq_pkt_reuse_buf_va(c3d_sram_pkt, reuse_c3d0, reuse_buf_size);
-		cmdq_pkt_reuse_buf_va(c3d1_sram_pkt, reuse_c3d1, reuse_buf_size);
+		if (comp->mtk_crtc->is_dual_pipe)
+			cmdq_pkt_reuse_buf_va(c3d1_sram_pkt, reuse_c3d1, reuse_buf_size);
 	}
 }
 
