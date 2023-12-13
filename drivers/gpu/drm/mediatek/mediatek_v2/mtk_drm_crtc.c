@@ -1403,6 +1403,7 @@ int mtk_drm_setbacklight(struct drm_crtc *crtc, unsigned int level,
 	}
 
 	CRTC_MMP_MARK(index, backlight, bl_cnt, 0);
+	drm_trace_tag_mark("backlight");
 	bl_cnt++;
 
 	cb_data->crtc = crtc;
@@ -2032,6 +2033,7 @@ int mtk_crtc_user_cmd(struct drm_crtc *crtc, struct mtk_ddp_comp *comp,
 	}
 
 	CRTC_MMP_MARK(index, user_cmd, user_cmd_cnt, (unsigned long)cmdq_handle);
+	drm_trace_tag_mark("user_cmd");
 
 	if (mtk_crtc_with_sub_path(crtc, mtk_crtc->ddp_mode))
 		mtk_crtc_wait_frame_done(mtk_crtc, cmdq_handle,
@@ -6763,6 +6765,7 @@ static void ddp_cmdq_cb(struct cmdq_cb_data data)
 			atomic_set(&priv->need_recover, 0);
 	}
 	CRTC_MMP_MARK(id, frame_cfg, ovl_status, 0);
+	drm_trace_tag_mark("frame_cfg");
 
 	if (old_mtk_state->pending_usage_update) {
 		unsigned int i;
@@ -7080,6 +7083,12 @@ int mtk_crtc_comp_is_busy(struct mtk_drm_crtc *mtk_crtc)
 static void trig_done_cb(struct cmdq_cb_data data)
 {
 	CRTC_MMP_MARK((unsigned long)data.data, trig_loop_done, 0, 0);
+	drm_trace_tag_mark("trig_loop_done");
+}
+
+static void event_done_cb(struct cmdq_cb_data data)
+{
+	drm_trace_tag_mark("event_loop_done");
 }
 #endif
 
@@ -7425,7 +7434,7 @@ void mtk_crtc_start_event_loop(struct drm_crtc *crtc)
 
 	cmdq_pkt_finalize_loop(cmdq_handle);
 
-	cmdq_pkt_flush_async(cmdq_handle, NULL, (void *)crtc_id);
+	cmdq_pkt_flush_async(cmdq_handle, event_done_cb, (void *)crtc_id);
 }
 
 #ifndef DRM_CMDQ_DISABLE
@@ -8769,6 +8778,8 @@ void mtk_crtc_set_dirty(struct mtk_drm_crtc *mtk_crtc)
 		return;
 	}
 
+	drm_trace_tag_mark("crtc_set_dirty");
+
 	mtk_crtc_pkt_create(&cmdq_handle, &mtk_crtc->base,
 		mtk_crtc->gce_obj.client[CLIENT_CFG]);
 
@@ -8794,6 +8805,7 @@ static int __mtk_check_trigger(struct mtk_drm_crtc *mtk_crtc)
 
 	DDP_MUTEX_LOCK(&mtk_crtc->lock, __func__, __LINE__);
 	CRTC_MMP_EVENT_START(index, check_trigger, 0, 0);
+	drm_trace_tag_start("check_trigger");
 
 	if (!mtk_crtc->enabled) {
 		CRTC_MMP_EVENT_END(index, check_trigger, 0, 1);
@@ -8813,6 +8825,7 @@ static int __mtk_check_trigger(struct mtk_drm_crtc *mtk_crtc)
 		DDPINFO("%s skip mtk_crtc_set_dirty\n", __func__);
 
 	CRTC_MMP_EVENT_END(index, check_trigger, 0, 0);
+	drm_trace_tag_end("check_trigger");
 	DDP_MUTEX_UNLOCK(&mtk_crtc->lock, __func__, __LINE__);
 
 	return 0;
@@ -8889,6 +8902,7 @@ void mtk_crtc_check_trigger(struct mtk_drm_crtc *mtk_crtc, bool delay,
 	if (need_lock)
 		DDP_MUTEX_LOCK(&mtk_crtc->lock, __func__, __LINE__);
 	CRTC_MMP_EVENT_START(index, kick_trigger, (unsigned long)crtc, 0);
+	drm_trace_tag_start("kick_trigger");
 
 	index = drm_crtc_index(crtc);
 	if (index) {
@@ -8945,6 +8959,7 @@ void mtk_crtc_check_trigger(struct mtk_drm_crtc *mtk_crtc, bool delay,
 
 err:
 	CRTC_MMP_EVENT_END(index, kick_trigger, 0, 0);
+	drm_trace_tag_end("kick_trigger");
 	if (need_lock)
 		DDP_MUTEX_UNLOCK(&mtk_crtc->lock, __func__, __LINE__);
 }
@@ -11789,6 +11804,7 @@ static void mtk_drm_crtc_atomic_begin(struct drm_crtc *crtc,
 	mtk_crtc_state->cmdq_handle =
 		mtk_crtc_gce_commit_begin(crtc, old_crtc_state, mtk_crtc_state, true);
 	CRTC_MMP_MARK(index, atomic_begin, (unsigned long)mtk_crtc_state->cmdq_handle, 0);
+	drm_trace_tag_mark("atomic_begin");
 
 #ifndef DRM_CMDQ_DISABLE
 	/* reset mml ir ovl, TODO: support random ovl, not the first comp of the path */
@@ -13353,6 +13369,8 @@ static void mtk_drm_crtc_atomic_flush(struct drm_crtc *crtc,
 			mtk_crtc_state->prop_val[CRTC_PROP_PRES_FENCE_IDX], ~0);
 		CRTC_MMP_MARK((int) index, update_present_fence, 0,
 			mtk_crtc_state->prop_val[CRTC_PROP_PRES_FENCE_IDX]);
+		drm_trace_tag_value("update_present_fence",
+			mtk_crtc_state->prop_val[CRTC_PROP_PRES_FENCE_IDX]);
 	}
 
 	/* for wfd latency debug */
@@ -13475,6 +13493,7 @@ static void mtk_drm_crtc_atomic_flush(struct drm_crtc *crtc,
 	}
 	CRTC_MMP_MARK((int) index, atomic_flush, cmdq_handle_cache,
 			cmdq_handle_size_cache);
+	drm_trace_tag_mark("atomic_flush");
 #else
 	ret = mtk_crtc_gce_flush(crtc, NULL, NULL, cmdq_handle);
 	if (ret) {
