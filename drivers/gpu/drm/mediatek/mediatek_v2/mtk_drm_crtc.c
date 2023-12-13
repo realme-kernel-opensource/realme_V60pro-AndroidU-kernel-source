@@ -11498,7 +11498,9 @@ rte_target:
 				mtk_crtc->gce_obj.event[EVENT_CABC_EOF]);
 		}
 
-		mtk_drm_trace_end();
+		mtk_drm_trace_end("msync_level_fps:%u[%u] to %u[%u]",
+			fps_level_old, min_fps_old,
+			fps_level, min_fps);
 
 	/* If need Multi TE, to do it here */
 	} else if (params->msync_cmd_table.te_type == MULTI_TE) {
@@ -11636,7 +11638,9 @@ mte_target:
 				mtk_crtc->gce_obj.event[EVENT_CABC_EOF]);
 		}
 
-		mtk_drm_trace_end();
+		mtk_drm_trace_end("msync_level_fps:%u[%u] to %u[%u]",
+			fps_level_old, min_fps_old,
+			fps_level, min_fps);
 
 	} else if (params->msync_cmd_table.te_type == TRIGGER_LEVEL_TE) {
 		/* TODO: Add Trigger Level Te */
@@ -13595,7 +13599,10 @@ end:
 #endif
 	CRTC_MMP_EVENT_END((int) index, atomic_flush, (unsigned long)crtc_state,
 			(unsigned long)old_crtc_state);
-	mtk_drm_trace_end();
+	mtk_drm_trace_end("mtk_drm_crtc_atomic:%d-%d-%d-%d",
+				index, mtk_crtc_state->prop_val[CRTC_PROP_PRES_FENCE_IDX],
+				mtk_crtc_state->prop_val[CRTC_PROP_MSYNC2_0_ENABLE],
+				mtk_crtc->msync2.msync_disabled);
 	ktime_get_real_ts64(&atomic_flush_tval);
 }
 
@@ -14481,12 +14488,6 @@ static int mtk_drm_sf_pf_release_thread(void *data)
 		wait_event_interruptible(mtk_crtc->sf_present_fence_wq,
 					 atomic_read(&mtk_crtc->sf_pf_event));
 		atomic_set(&mtk_crtc->sf_pf_event, 0);
-
-#ifndef DRM_CMDQ_DISABLE
-		mutex_lock(&private->commit.lock);
-
-		mutex_unlock(&private->commit.lock);
-#endif
 	}
 
 	return 0;
