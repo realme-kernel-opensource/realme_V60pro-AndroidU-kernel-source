@@ -12277,6 +12277,7 @@ void mtk_ddp_add_comp_to_path(struct mtk_drm_crtc *mtk_crtc,
 	const struct mtk_mmsys_reg_data *reg_data = mtk_crtc->mmsys_reg_data;
 	enum mtk_ddp_comp_id cur = comp->id;
 	void __iomem *config_regs = mtk_crtc->config_regs;
+	resource_size_t config_regs_pa = mtk_crtc->config_regs_pa;
 	struct mtk_drm_private *priv = mtk_crtc->base.dev->dev_private;
 
 	switch (priv->data->mmsys_id) {
@@ -12350,12 +12351,14 @@ void mtk_ddp_add_comp_to_path(struct mtk_drm_crtc *mtk_crtc,
 		reg1 = 0;
 		/* decide which dispsys need to config */
 		if (mtk_crtc->dispsys_num > 1 && reg_data->dispsys_map &&
-				reg_data->dispsys_map[cur] == 1)
+				reg_data->dispsys_map[cur] == 1) {
 			config_regs = mtk_crtc->side_config_regs;
-
+			config_regs_pa = mtk_crtc->side_config_regs_pa;
+		}
 		if (reg_data->dispsys_map && (reg_data->dispsys_map[cur] == OVLSYS0 ||
 			reg_data->dispsys_map[next] == OVLSYS0)) {
 			config_regs = mtk_crtc->ovlsys0_regs;
+			config_regs_pa = mtk_crtc->ovlsys0_regs_pa;
 			addr = MT6985_OVLSYS_BYPASS_MUX_SHADOW;
 			reg = 0x1;
 			reg1 = 0xFF0000;
@@ -12363,6 +12366,7 @@ void mtk_ddp_add_comp_to_path(struct mtk_drm_crtc *mtk_crtc,
 				(reg_data->dispsys_map[cur] == OVLSYS1 ||
 			reg_data->dispsys_map[next] == OVLSYS1)) {
 			config_regs = mtk_crtc->ovlsys1_regs;
+			config_regs_pa = mtk_crtc->ovlsys1_regs_pa;
 			addr = MT6985_OVLSYS_BYPASS_MUX_SHADOW;
 			reg = 0x1;
 			reg1 = 0xFF0000;
@@ -12379,9 +12383,17 @@ void mtk_ddp_add_comp_to_path(struct mtk_drm_crtc *mtk_crtc,
 
 		value = mtk_ddp_ovl_con_MT6985(cur, next, &addr);
 		if (value >= 0) {
-			reg = readl_relaxed(config_regs + addr) |
-					(unsigned int)value;
-			writel_relaxed(reg, config_regs + addr);
+			struct cmdq_pkt *cmdq_handle =
+				cmdq_pkt_create(mtk_crtc->gce_obj.client[CLIENT_CFG]);
+			if (IS_ERR_OR_NULL(cmdq_handle)) {
+				DDPPR_ERR("%s create handle fail, %lu\n",
+						__func__, (unsigned long)cmdq_handle);
+				break;
+			}
+			cmdq_pkt_write(cmdq_handle, mtk_crtc->gce_obj.base,
+				config_regs_pa + addr, value, value);
+			cmdq_pkt_flush(cmdq_handle);
+			cmdq_pkt_destroy(cmdq_handle);
 		}
 		value = mtk_ddp_mout_en_MT6985(reg_data, cur, next, &addr);
 		if (value >= 0) {
@@ -12990,6 +13002,7 @@ void mtk_ddp_remove_comp_from_path(struct mtk_drm_crtc *mtk_crtc,
 	unsigned int addr, reg;
 	int value;
 	void __iomem *config_regs = NULL;
+	resource_size_t config_regs_pa;
 	const struct mtk_mmsys_reg_data *reg_data  = NULL;
 	struct mtk_drm_private *priv = NULL;
 
@@ -12998,6 +13011,7 @@ void mtk_ddp_remove_comp_from_path(struct mtk_drm_crtc *mtk_crtc,
 		return;
 	}
 	config_regs = mtk_crtc->config_regs;
+	config_regs_pa = mtk_crtc->config_regs_pa;
 	reg_data  = mtk_crtc->mmsys_reg_data;
 	priv = mtk_crtc->base.dev->dev_private;
 
@@ -13038,23 +13052,36 @@ void mtk_ddp_remove_comp_from_path(struct mtk_drm_crtc *mtk_crtc,
 		}
 		/* decide which dispsys need to config */
 		if (mtk_crtc->dispsys_num > 1 &&
-				reg_data->dispsys_map[cur] == 1)
+				reg_data->dispsys_map[cur] == 1) {
 			config_regs = mtk_crtc->side_config_regs;
-
+			config_regs_pa = mtk_crtc->side_config_regs_pa;
+		}
 		if (reg_data->dispsys_map &&
 			(reg_data->dispsys_map[cur] == OVLSYS0 ||
 			reg_data->dispsys_map[next] == OVLSYS0)) {
 			config_regs = mtk_crtc->ovlsys0_regs;
+			config_regs_pa = mtk_crtc->ovlsys0_regs_pa;
 		} else if (mtk_crtc->ovlsys_num > 1 &&
 				(reg_data->dispsys_map[cur] == OVLSYS1 ||
 			reg_data->dispsys_map[next] == OVLSYS1)) {
 			config_regs = mtk_crtc->ovlsys1_regs;
+			config_regs_pa = mtk_crtc->ovlsys1_regs_pa;
 		}
 
 		value = mtk_ddp_ovl_con_MT6985(cur, next, &addr);
 		if (value >= 0) {
-			reg = readl_relaxed(config_regs + addr) & ~(unsigned int)value;
-			writel_relaxed(reg, config_regs + addr);
+			struct cmdq_pkt *cmdq_handle =
+				cmdq_pkt_create(mtk_crtc->gce_obj.client[CLIENT_CFG]);
+			if (IS_ERR_OR_NULL(cmdq_handle)) {
+				DDPPR_ERR("%s create handle fail, %lu\n",
+						__func__, (unsigned long)cmdq_handle);
+				break;
+			}
+			cmdq_pkt_write(cmdq_handle, mtk_crtc->gce_obj.base,
+					   config_regs_pa + addr,
+					   ~(unsigned int)value, value);
+			cmdq_pkt_flush(cmdq_handle);
+			cmdq_pkt_destroy(cmdq_handle);
 		}
 		value = mtk_ddp_mout_en_MT6985(reg_data, cur, next, &addr);
 		if (value >= 0) {
