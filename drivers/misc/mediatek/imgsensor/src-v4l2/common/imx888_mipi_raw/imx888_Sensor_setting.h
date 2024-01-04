@@ -2565,6 +2565,7 @@ static u16 imx888_preview_setting[] = {
 	0x0855, 0x29,
 	0x0858, 0x00,
 	0x0859, 0x1F, // T3-post:224 UI
+	// 0x3247, 0x00,
 };
 
 
@@ -2698,6 +2699,7 @@ static u16 imx888_capture_setting[] = {
 	0x0855, 0x29,
 	0x0858, 0x00,
 	0x0859, 0x1F, // T3-post:224 UI
+	// 0x3247, 0x00,
 };
 
 static u16 imx888_normal_video_setting[] = {
@@ -2829,6 +2831,7 @@ static u16 imx888_normal_video_setting[] = {
 	0x0855, 0x29,
 	0x0858, 0x00,
 	0x0859, 0x1F, // T3-post:224 UI
+	// 0x3247, 0x00,
 };
 
 //same as preview mode
@@ -2961,6 +2964,7 @@ static u16 imx888_hs_video_setting[] = {
 	0x0855, 0x29,
 	0x0858, 0x00,
 	0x0859, 0x1F, // T3-post:224 UI
+	// 0x3247, 0x00,
 };
 
 //same as preview mode
@@ -3093,6 +3097,7 @@ static u16 imx888_slim_video_setting[] = {
 	0x0855, 0x29,
 	0x0858, 0x00,
 	0x0859, 0x1F, // T3-post:224 UI
+	// 0x3247, 0x00,
 };
 
 //DCG, sensor merged mode, ratio =4, RawBit = 12
@@ -3226,6 +3231,7 @@ static u16 imx888_custom1_setting[] = {
 	0x0855, 0x29,
 	0x0858, 0x00,
 	0x0859, 0x1F, // T3-post:224 UI
+	// 0x3247, 0x00,
 };
 
 //DCG, sensor merged mode, ratio =16, RawBit = 14
@@ -3359,6 +3365,7 @@ static u16 imx888_custom2_setting[] = {
 	0x0855, 0x29,
 	0x0858, 0x00,
 	0x0859, 0x1F, // T3-post:224 UI
+	// 0x3247, 0x00,
 };
 
 //LBMF-2exp, Auto mode
@@ -3918,6 +3925,7 @@ static u16 imx888_seamless_custom3[] = {
 	0x0E8F, 0x01,
 	0x3240, 0x00,
 	0x3241, 0x01,
+	// 0x3247, 0x06,
 	0x3247, 0x02,
 	0x3248, 0x00,
 	0xBD06, 0x00,

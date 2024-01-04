@@ -67,7 +67,7 @@ static int g_pd_pixel_region(struct adaptor_ctx *ctx, struct v4l2_ctrl *ctrl)
 static void dump_perframe_info(struct adaptor_ctx *ctx, struct mtk_hdr_ae *ae_ctrl)
 {
 	dev_info(ctx->dev,
-		"[%s][%s] sensor_idx %d, req id %d, sof_cnt:%u, exposure[LLLE->SSSE] %d %d %d %d %d ana_gain[LLLE->SSSE] %d %d %d %d %d, w(%d/%d/%d/%d/%d,%d/%d/%d/%d/%d) sub_tag:%u, fl:%u, min_fl:%u, flick_en:%u, mode:(line_time:%u, margin:%u, scen:%u; STG:(readout_l:%u, read_margin:%u, ext_fl:%u, fast_mode:%u))\n",
+		"[%s][%s] sensor_idx %d, req id %d, sof_cnt:%u, exposure[LLLE->SSSE] %d %d %d %d %d ana_gain[LLLE->SSSE] %d %d %d %d %d, w(%d/%d/%d/%d/%d,%d/%d/%d/%d/%d) sub_tag:%u, ctx:(fl:(%u,lut:%u/%u/%u)/RG:(%u,%u/%u/%u/%u/%u), min_fl:%u, flick_en:%u, mode:(line_time:%u, margin:%u, scen:%u; STG:(readout_l:%u, read_margin:%u, ext_fl:%u, fast_mode:%u))\n",
 		ctx->sd.name,
 		(ctx->subdrv) ? (ctx->subdrv->name) : "null",
 		ctx->idx,
@@ -95,6 +95,15 @@ static void dump_perframe_info(struct adaptor_ctx *ctx, struct mtk_hdr_ae *ae_ct
 		ae_ctrl->w_gain.ssse_gain,
 		ae_ctrl->subsample_tags,
 		ctx->subctx.frame_length,
+		ctx->subctx.frame_length_in_lut[0],
+		ctx->subctx.frame_length_in_lut[1],
+		ctx->subctx.frame_length_in_lut[2],
+		ctx->subctx.frame_length_rg,
+		ctx->subctx.frame_length_in_lut_rg[0],
+		ctx->subctx.frame_length_in_lut_rg[1],
+		ctx->subctx.frame_length_in_lut_rg[2],
+		ctx->subctx.frame_length_in_lut_rg[3],
+		ctx->subctx.frame_length_in_lut_rg[4],
 		ctx->subctx.min_frame_length,
 		ctx->subctx.autoflicker_en,
 		CALC_LINE_TIME_IN_NS(ctx->subctx.pclk, ctx->subctx.line_length),
@@ -1279,7 +1288,7 @@ static int imgsensor_set_ctrl(struct v4l2_ctrl *ctrl)
 					__func__,
 					info->target_scenario_id);
 			}
-
+			ctx->last_framelength = ctx->subctx.frame_length_rg;
 		}
 		break;
 #ifdef IMGSENSOR_DEBUG
@@ -1345,6 +1354,8 @@ static int imgsensor_set_ctrl(struct v4l2_ctrl *ctrl)
 			ctx->shutter_for_timeout = ctx->exposure->val;
 			if (ctx->cur_mode->fine_intg_line)
 				ctx->shutter_for_timeout /= 1000;
+
+			ctx->last_framelength = ctx->subctx.frame_length_rg;
 
 			_sensor_reset_s_stream(ctrl);
 			//dev_info(dev, "exit V4L2_CID_MTK_SENSOR_RESET\n");

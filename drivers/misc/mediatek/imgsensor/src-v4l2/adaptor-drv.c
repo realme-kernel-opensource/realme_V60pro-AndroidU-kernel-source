@@ -743,6 +743,9 @@ static int imgsensor_start_streaming(struct adaptor_ctx *ctx)
 			ctx->shutter_for_timeout /= 1000;
 	}
 
+	/* 1st/2nd framelength */
+	ctx->last_framelength = ctx->subctx.frame_length_rg;
+
 	/* notify frame-sync streaming ON */
 	notify_fsync_mgr_streaming(ctx, 1);
 #if IMGSENSOR_LOG_MORE

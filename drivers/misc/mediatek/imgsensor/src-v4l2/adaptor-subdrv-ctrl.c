@@ -10,6 +10,7 @@
 #include <linux/fs.h>
 #include <linux/atomic.h>
 #include <linux/types.h>
+#include <linux/timer.h>
 
 #include "kd_camera_typedef.h"
 #include "kd_imgsensor.h"
@@ -340,6 +341,124 @@ void check_frame_length_limitation(struct subdrv_ctx *ctx)
 	DRV_LOG(ctx, "no calibration data applied to sensor.");
 }
 
+/**
+ * @brief: implementation for updating fll addr for lbmf:
+ * for auto mode, the FLL addr is equal to general FLL. (optional)
+ * for manual mode, new member declared in s_ctx structure such as
+ * reg_addr_frame_length_in_lbmf for storing  fll_a, fll_b, etc.
+ * @param ctx: subdrv_ctx
+ * @param fll: frame length lines for auto mode (optional)
+ * @param fll_in_lut: frame length array in lut for manual mode
+ */
+void write_frame_length_in_lut(struct subdrv_ctx *ctx, u32 fll, u32 *fll_in_lut)
+{
+	int i = 0;
+	u32 frame_length_buf;
+	u32 fll_step = 0;
+
+	check_current_scenario_id_bound(ctx);
+	fll_step = ctx->s_ctx.mode[ctx->current_scenario_id].framelength_step;
+
+	// manual mode
+	switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	{
+		if (fll_step) {
+			fll_in_lut[0] =
+				round_up(fll_in_lut[0], fll_step);
+			fll_in_lut[1] =
+				round_up(fll_in_lut[1], fll_step);
+		}
+		fll_in_lut[2] = 0;
+		fll_in_lut[3] = 0;
+		fll_in_lut[4] = 0;
+		ctx->frame_length_in_lut[0] = fll_in_lut[0];
+		ctx->frame_length_in_lut[1] = fll_in_lut[1];
+		ctx->frame_length =
+			ctx->frame_length_in_lut[0] + ctx->frame_length_in_lut[1];
+	}
+		break;
+	case HDR_RAW_LBMF_3EXP:
+	{
+		if (fll_step) {
+			fll_in_lut[0] =
+				round_up(fll_in_lut[0], fll_step);
+			fll_in_lut[1] =
+				round_up(fll_in_lut[1], fll_step);
+			fll_in_lut[2] =
+				round_up(fll_in_lut[2], fll_step);
+		}
+		fll_in_lut[3] = 0;
+		fll_in_lut[4] = 0;
+		ctx->frame_length_in_lut[0] = fll_in_lut[0];
+		ctx->frame_length_in_lut[1] = fll_in_lut[1];
+		ctx->frame_length_in_lut[2] = fll_in_lut[2];
+		ctx->frame_length =
+			ctx->frame_length_in_lut[0] +
+			ctx->frame_length_in_lut[1] +
+			ctx->frame_length_in_lut[2];
+	}
+		break;
+	default:
+		break;
+	}
+
+	if (ctx->extend_frame_length_en == FALSE) {
+		frame_length_buf = 0;
+		for (i = 0; i < 3; i++) {
+			if (fll_in_lut[i]) {
+				if (ctx->s_ctx.reg_addr_frame_length_in_lut[i].addr[2]) {
+					set_i2c_buffer(ctx,
+						ctx->s_ctx.reg_addr_frame_length_in_lut[i].addr[0],
+						(fll_in_lut[i] >> 16) & 0xFF);
+					set_i2c_buffer(ctx,
+						ctx->s_ctx.reg_addr_frame_length_in_lut[i].addr[1],
+						(fll_in_lut[i] >> 8) & 0xFF);
+					set_i2c_buffer(ctx,
+						ctx->s_ctx.reg_addr_frame_length_in_lut[i].addr[2],
+						fll_in_lut[i] & 0xFF);
+				} else {
+					set_i2c_buffer(ctx,
+						ctx->s_ctx.reg_addr_frame_length_in_lut[i].addr[0],
+						(fll_in_lut[i] >> 8) & 0xFF);
+					set_i2c_buffer(ctx,
+						ctx->s_ctx.reg_addr_frame_length_in_lut[i].addr[1],
+						fll_in_lut[i] & 0xFF);
+				}
+				/* update FL_lut RG value after setting buffer for writing RG */
+				ctx->frame_length_in_lut_rg[i] = fll_in_lut[i];
+				frame_length_buf +=
+					ctx->frame_length_in_lut_rg[i];
+			}
+		}
+		/* update FL RG value simultaneously */
+		ctx->frame_length_rg = frame_length_buf;
+
+		DRV_LOG(ctx,
+			"ctx:(fl(RG):%u,%u/%u/%u/%u/%u), scen_id:%u,fll(input/ctx/output_a/b/c/d/e):0x%x/%x/%x/%x/%x/%x/%x,fll_step:%u\n",
+			ctx->frame_length_rg,
+			ctx->frame_length_in_lut_rg[0],
+			ctx->frame_length_in_lut_rg[1],
+			ctx->frame_length_in_lut_rg[2],
+			ctx->frame_length_in_lut_rg[3],
+			ctx->frame_length_in_lut_rg[4],
+			ctx->current_scenario_id,
+			fll,
+			ctx->frame_length,
+			fll_in_lut[0],
+			fll_in_lut[1],
+			fll_in_lut[2],
+			fll_in_lut[3],
+			fll_in_lut[4],
+			fll_step);
+	} else {
+		DRV_LOG(ctx,
+			"sid:%u,extend_frame_length_en:%u,default won't write fll!\n",
+			ctx->current_scenario_id,ctx->extend_frame_length_en);
+		return;
+	}
+}
+
 void write_frame_length(struct subdrv_ctx *ctx, u32 fll)
 {
 	u32 addr_h = ctx->s_ctx.reg_addr_frame_length.addr[0];
@@ -375,7 +494,12 @@ void write_frame_length(struct subdrv_ctx *ctx, u32 fll)
 			set_i2c_buffer(ctx,	addr_h, (fll >> 8) & 0xFF);
 			set_i2c_buffer(ctx,	addr_l, fll & 0xFF);
 		}
-		DRV_LOG(ctx, "fll[0x%x] multiply %u, fll_step:%u\n", fll, dol_cnt, fll_step);
+		/* update FL RG value after setting buffer for writing RG */
+		ctx->frame_length_rg = ctx->frame_length;
+
+		DRV_LOG(ctx,
+			"ctx:(fl(RG):%u), fll[0x%x] multiply %u, fll_step:%u\n",
+			ctx->frame_length_rg, fll, dol_cnt, fll_step);
 	}
 }
 
@@ -385,11 +509,129 @@ void set_dummy(struct subdrv_ctx *ctx)
 
 	if (gph)
 		ctx->s_ctx.s_gph((void *)ctx, 1);
-	write_frame_length(ctx, ctx->frame_length);
+
+	switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	case HDR_RAW_LBMF_3EXP:
+	{
+		write_frame_length_in_lut(ctx,
+			ctx->frame_length, ctx->frame_length_in_lut);
+	}
+		break;
+	default:
+		write_frame_length(ctx, ctx->frame_length);
+		break;
+	}
+
 	if (gph)
 		ctx->s_ctx.s_gph((void *)ctx, 0);
 
 	commit_i2c_buffer(ctx);
+}
+
+/**
+ * @brief: implementation for updating fll for lbmf.
+ * Basically frame-sync will calculate itself, so this function only need to
+ * simply prevent framelength constraints (no need to consider
+ * previous or current shutter) and finally send them to write framelength.
+ * user: frame-sync.
+ * @param ctx: subdrv_ctx
+ * @param frame_length: overall frame length lines
+ * @param frame_length_in_lut: frame length array in lut for manual mode
+ */
+void set_frame_length_in_lut(struct subdrv_ctx *ctx,
+	u32 frame_length, u32 *frame_length_in_lut)
+{
+	u16 exp_cnt = 0;
+	int i = 0;
+	u32 calc_fl_in_lut[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
+	bool gph = !ctx->is_seamless && (ctx->s_ctx.s_gph != NULL);
+
+	if (frame_length)
+		ctx->frame_length = frame_length;
+	ctx->frame_length = max(ctx->frame_length, ctx->min_frame_length);
+
+	exp_cnt = ARRAY_SIZE(ctx->exposure);
+	if (exp_cnt != 0) {
+		for (i = 0; i < exp_cnt; i++) {
+			if (frame_length_in_lut[i])
+				ctx->frame_length_in_lut[i] = frame_length_in_lut[i];
+			else {
+				ctx->frame_length_in_lut[i] = 0;
+				DRV_LOG_MUST(ctx,
+					"pls depend on exp_cnt to assign frame_length_in_lut!\n");
+				continue;
+			}
+			/* fll_a/b/c_min = readout + xx lines(margin) */
+			calc_fl_in_lut[i] =
+				ctx->s_ctx.mode[ctx->current_scenario_id].readout_length +
+				ctx->s_ctx.mode[ctx->current_scenario_id].read_margin;
+			/* fll_a/b/c = max(readout, userInput_fll_a/b/c) */
+			ctx->frame_length_in_lut[i] =
+				max(ctx->frame_length_in_lut[i], calc_fl_in_lut[i]);
+			switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+			case HDR_RAW_LBMF_2EXP:
+			{
+				if (i == 1) {
+					if (ctx->frame_length >= ctx->frame_length_in_lut[0]) {
+						/* fll_b = max(fll_b, fll-fll_a) */
+						ctx->frame_length_in_lut[i] =
+							max(ctx->frame_length_in_lut[i],
+								ctx->frame_length - ctx->frame_length_in_lut[0]);
+					}
+				}
+			}
+				break;
+			case HDR_RAW_LBMF_3EXP:
+			{
+				if (i == 2) {
+					if (ctx->frame_length >=
+						(ctx->frame_length_in_lut[0] +
+						ctx->frame_length_in_lut[1])) {
+						/* fll_c = max(fll_c, fll-fll_b-fll_a) */
+						ctx->frame_length_in_lut[i] =
+							max(ctx->frame_length_in_lut[i],
+								(ctx->frame_length -
+								ctx->frame_length_in_lut[1] -
+								ctx->frame_length_in_lut[0]));
+					}
+				}
+			}
+				break;
+			default:
+				break;
+			}
+			/* fll_a/b/c = min(fll_a/b/c, fll_max) */
+			ctx->frame_length_in_lut[i] =
+				min(ctx->frame_length_in_lut[i], ctx->s_ctx.frame_length_max);
+		}
+	} else {
+		DRV_LOGE(ctx, "pls check exp_cnt!\n");
+		return;
+	}
+
+	/* update framelength */
+	ctx->frame_length = 0;
+	for (i = 0; i < exp_cnt; i++)
+		ctx->frame_length += ctx->frame_length_in_lut[i];
+
+	if (gph)
+		ctx->s_ctx.s_gph((void *)ctx, 1);
+	write_frame_length_in_lut(ctx, ctx->frame_length, ctx->frame_length_in_lut);
+	if (gph)
+		ctx->s_ctx.s_gph((void *)ctx, 0);
+	commit_i2c_buffer(ctx);
+	DRV_LOG(ctx,
+		"sid:%u,fll(input/ctx/output_a/b/c/d/e/min):%u/%u/%u/%u/%u/%u/%u/%u\n",
+		ctx->current_scenario_id,
+		frame_length,
+		ctx->frame_length,
+		ctx->frame_length_in_lut[0],
+		ctx->frame_length_in_lut[1],
+		ctx->frame_length_in_lut[2],
+		ctx->frame_length_in_lut[3],
+		ctx->frame_length_in_lut[4],
+		ctx->min_frame_length);
 }
 
 void set_frame_length(struct subdrv_ctx *ctx, u16 frame_length)
@@ -412,21 +654,343 @@ void set_frame_length(struct subdrv_ctx *ctx, u16 frame_length)
 		frame_length, ctx->frame_length, ctx->min_frame_length);
 }
 
-void set_max_framerate(struct subdrv_ctx *ctx, u16 framerate, bool min_framelength_en)
+/**
+ * @brief: This api is used to assign general FLL for case except for lbmf or
+ * FLL_A/FLL_B in lut for lbmf manual mode. It might be called between open and
+ * set_shutter or after set_shutter, so we need to confirm as below:
+ * 1. Framelength in lut is longer than readout + margin.
+ * 2. If framelength is longer than readout + margin after set_shutter, we need
+ * to compare and choose the bigger one.
+ * @param ctx: subdrv_ctx
+ * @param framerate: input framerate
+ * @param min_framelength_en: by enabling it, it will update framelength in ctx.
+ */
+void set_max_framerate(struct subdrv_ctx *ctx,
+	u16 framerate, bool min_framelength_en)
 {
 	u32 frame_length = 0;
 
 	if (framerate && ctx->line_length)
 		frame_length = ctx->pclk / framerate * 10 / ctx->line_length;
 	ctx->frame_length = max(frame_length, ctx->min_frame_length);
-	ctx->frame_length = min(ctx->frame_length, ctx->s_ctx.frame_length_max);
+	/*
+	 * For manual mode:
+	 * update FLL_B (2 exposure) / FLL_C (3 exposure) to extend the framelength
+	 */
+	switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	{
+		ctx->frame_length_in_lut[0] =
+			max(ctx->frame_length_in_lut[0],
+				ctx->s_ctx.mode[ctx->current_scenario_id].readout_length +
+				ctx->s_ctx.mode[ctx->current_scenario_id].read_margin);
+		ctx->frame_length_in_lut[0] =
+			min(ctx->frame_length_in_lut[0], ctx->s_ctx.frame_length_max);
+		ctx->frame_length_in_lut[1] =
+			max(ctx->frame_length_in_lut[1],
+				ctx->s_ctx.mode[ctx->current_scenario_id].readout_length +
+				ctx->s_ctx.mode[ctx->current_scenario_id].read_margin);
+		if (ctx->frame_length >= ctx->frame_length_in_lut[0]) {
+			ctx->frame_length_in_lut[1] =
+				max(ctx->frame_length_in_lut[1],
+					ctx->frame_length - ctx->frame_length_in_lut[0]);
+		}
+		ctx->frame_length_in_lut[1] =
+			min(ctx->frame_length_in_lut[1], ctx->s_ctx.frame_length_max);
+		ctx->frame_length_in_lut[2] = 0;
+		ctx->frame_length_in_lut[3] = 0;
+		ctx->frame_length_in_lut[4] = 0;
+		/* update framelength */
+		ctx->frame_length =
+			ctx->frame_length_in_lut[0] + ctx->frame_length_in_lut[1];
+	}
+		break;
+	case HDR_RAW_LBMF_3EXP:
+	{
+		ctx->frame_length_in_lut[0] =
+			max(ctx->frame_length_in_lut[0],
+				ctx->s_ctx.mode[ctx->current_scenario_id].readout_length +
+				ctx->s_ctx.mode[ctx->current_scenario_id].read_margin);
+		ctx->frame_length_in_lut[0] =
+			min(ctx->frame_length_in_lut[0], ctx->s_ctx.frame_length_max);
+		ctx->frame_length_in_lut[1] =
+			max(ctx->frame_length_in_lut[1],
+				ctx->s_ctx.mode[ctx->current_scenario_id].readout_length +
+				ctx->s_ctx.mode[ctx->current_scenario_id].read_margin);
+		ctx->frame_length_in_lut[1] =
+			min(ctx->frame_length_in_lut[1], ctx->s_ctx.frame_length_max);
+		ctx->frame_length_in_lut[2] =
+			max(ctx->frame_length_in_lut[2],
+				ctx->s_ctx.mode[ctx->current_scenario_id].readout_length +
+				ctx->s_ctx.mode[ctx->current_scenario_id].read_margin);
+		if (ctx->frame_length >=
+			(ctx->frame_length_in_lut[0] + ctx->frame_length_in_lut[1])) {
+			ctx->frame_length_in_lut[2] =
+				max(ctx->frame_length_in_lut[2],
+					(ctx->frame_length - ctx->frame_length_in_lut[1] -
+					ctx->frame_length_in_lut[0]));
+		}
+		ctx->frame_length_in_lut[2] =
+			min(ctx->frame_length_in_lut[2], ctx->s_ctx.frame_length_max);
+		ctx->frame_length_in_lut[3] = 0;
+		ctx->frame_length_in_lut[4] = 0;
+		/* update framelength */
+		ctx->frame_length =
+			ctx->frame_length_in_lut[0] +
+			ctx->frame_length_in_lut[1] +
+			ctx->frame_length_in_lut[2];
+	}
+		break;
+	default:
+		ctx->frame_length = min(ctx->frame_length, ctx->s_ctx.frame_length_max);
+		break;
+	}
+
 	if (ctx->frame_length && ctx->line_length)
 		ctx->current_fps = ctx->pclk / ctx->frame_length * 10 / ctx->line_length;
 	if (min_framelength_en)
 		ctx->min_frame_length = ctx->frame_length;
-	DRV_LOG(ctx, "max_fps(input/output):%u/%u, min_fl_en:%u\n",
-		framerate, ctx->current_fps, min_framelength_en);
-}	/*	set_max_framerate  */
+	switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	case HDR_RAW_LBMF_3EXP:
+	{
+		DRV_LOG(ctx,
+			"sid:%u,max_fps(input/output):%u/%u,min_fl_en:%u,fll(input/ctx/output_a/b/c/d/e):%u/%u/%u/%u/%u/%u/%u\n",
+			ctx->current_scenario_id,
+			framerate, ctx->current_fps, min_framelength_en,
+			frame_length,
+			ctx->frame_length,
+			ctx->frame_length_in_lut[0],
+			ctx->frame_length_in_lut[1],
+			ctx->frame_length_in_lut[2],
+			ctx->frame_length_in_lut[3],
+			ctx->frame_length_in_lut[4]);
+	}
+		break;
+	default:
+		DRV_LOG(ctx, "max_fps(input/output):%u/%u, min_fl_en:%u\n",
+			framerate, ctx->current_fps, min_framelength_en);
+		break;
+	}
+}	/* set_max_framerate */
+
+/**
+ * @brief: This api is used to assign FLL_A/FLL_B in lut for manual mode.
+ * It should refer to previous shutter because per-frame multi shutter framelength
+ * might not be called.
+ * @param ctx: subdrv_ctx
+ * @param scenario_id: current scenario id
+ * @param framerate: input framerate
+ */
+static void set_max_framerate_in_lut_by_scenario(struct subdrv_ctx *ctx,
+	enum SENSOR_SCENARIO_ID_ENUM scenario_id, u32 framerate)
+{
+	u32 frame_length = 0;
+	u32 frame_length_step = 0;
+	u16 exp_cnt = 0;
+	u32 cit_in_lut[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
+	u32 calc_fl_in_lut[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
+	int i;
+
+	frame_length = ctx->s_ctx.mode[scenario_id].pclk / framerate * 10
+		/ ctx->s_ctx.mode[scenario_id].linelength;
+	frame_length_step = ctx->s_ctx.mode[scenario_id].framelength_step;
+	frame_length = frame_length_step ?
+		(frame_length - (frame_length % frame_length_step)) : frame_length;
+	ctx->frame_length =
+		max(frame_length, ctx->s_ctx.mode[scenario_id].framelength);
+
+	// manual mode
+	switch (ctx->s_ctx.mode[scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	{
+		exp_cnt = 2;
+		for (i = 0; i < exp_cnt; i++) {
+			/*  update cit_in_lut depends on exposure_order_in_lbmf */
+			if (ctx->s_ctx.mode[scenario_id].exposure_order_in_lbmf ==
+				IMGSENSOR_LBMF_EXPOSURE_SE_FIRST) {
+				/* 2exp: cit_lut_a = SE / cit_lut_b = LE */
+				/* 3exp: cit_lut_a = SE / cit_lut_b = ME / cit_lut_c = LE */
+				cit_in_lut[i] = ctx->exposure[exp_cnt - 1 - i];
+			} else if (ctx->s_ctx.mode[scenario_id].exposure_order_in_lbmf ==
+				IMGSENSOR_LBMF_EXPOSURE_LE_FIRST) {
+				/* 2exp: cit_lut_a = LE / cit_lut_b = SE */
+				/* 3exp: cit_lut_a = LE / cit_lut_b = ME / cit_lut_c = SE */
+				cit_in_lut[i] = ctx->exposure[i];
+			} else {
+				DRV_LOGE(ctx, "pls assign exposure_order_in_lbmf value!\n");
+				return;
+			}
+		}
+		/* fll_a_min = readout + xx lines(margin) */
+		calc_fl_in_lut[0] =
+			ctx->s_ctx.mode[scenario_id].readout_length +
+			ctx->s_ctx.mode[scenario_id].read_margin;
+		/* fll_a = max(readout, previous shutter_b) */
+		calc_fl_in_lut[0] =
+			max(calc_fl_in_lut[0], cit_in_lut[1] + ctx->s_ctx.exposure_margin);
+		/* fll_a = min(fll_a, fll_max) */
+		ctx->frame_length_in_lut[0] =
+			min(calc_fl_in_lut[0], ctx->s_ctx.frame_length_max);
+		/* fll_b_min = readout + xx lines(margin) */
+		calc_fl_in_lut[1] =
+			ctx->s_ctx.mode[scenario_id].readout_length +
+			ctx->s_ctx.mode[scenario_id].read_margin;
+		/* fll_b = max(readout, previous shutter_a) */
+		calc_fl_in_lut[1] =
+			max(calc_fl_in_lut[1], cit_in_lut[0] + ctx->s_ctx.exposure_margin);
+		if (ctx->frame_length >= ctx->frame_length_in_lut[0]) {
+			/* fll_b = max(fll_b, fll_mode_max-fll_a) */
+			calc_fl_in_lut[1] =
+				max(calc_fl_in_lut[1],
+					ctx->frame_length - ctx->frame_length_in_lut[0]);
+		}
+		/* fll_b = min(fll_b, fll_max) */
+		ctx->frame_length_in_lut[1] =
+			min(calc_fl_in_lut[1], ctx->s_ctx.frame_length_max);
+		ctx->frame_length_in_lut[2] = 0;
+		ctx->frame_length_in_lut[3] = 0;
+		ctx->frame_length_in_lut[4] = 0;
+		/* update framelength */
+		ctx->frame_length =
+			ctx->frame_length_in_lut[0] + ctx->frame_length_in_lut[1];
+		ctx->current_fps = ctx->pclk / ctx->frame_length * 10 / ctx->line_length;
+		ctx->min_frame_length = ctx->frame_length;
+		DRV_LOG(ctx,
+			"sid:%u,max_fps(input/output):%u/%u,min_fl_en:1,lut order:%u,fll(input/ctx/output_a/b/c/d/e):%u/%u/%u/%u/%u/%u/%u\n",
+			scenario_id,
+			framerate, ctx->current_fps,
+			ctx->s_ctx.mode[scenario_id].exposure_order_in_lbmf,
+			frame_length,
+			ctx->frame_length,
+			ctx->frame_length_in_lut[0],
+			ctx->frame_length_in_lut[1],
+			ctx->frame_length_in_lut[2],
+			ctx->frame_length_in_lut[3],
+			ctx->frame_length_in_lut[4]);
+		if (ctx->s_ctx.mode[scenario_id].exposure_order_in_lbmf ==
+			IMGSENSOR_LBMF_EXPOSURE_SE_FIRST) {
+			if (ctx->s_ctx.reg_addr_auto_extend ||
+				(ctx->frame_length_in_lut[0] >
+				(ctx->exposure[0] + ctx->s_ctx.mode[scenario_id].read_margin)) ||
+				(ctx->frame_length_in_lut[1] >
+				(ctx->exposure[1] + ctx->s_ctx.mode[scenario_id].read_margin)))
+				set_dummy(ctx);
+		} else {
+			if (ctx->s_ctx.reg_addr_auto_extend ||
+				(ctx->frame_length_in_lut[0] >
+				(ctx->exposure[1] + ctx->s_ctx.mode[scenario_id].read_margin)) ||
+				(ctx->frame_length_in_lut[1] >
+				(ctx->exposure[0] + ctx->s_ctx.mode[scenario_id].read_margin)))
+				set_dummy(ctx);
+		}
+	}
+		break;
+	case HDR_RAW_LBMF_3EXP:
+	{
+		exp_cnt = 3;
+		for (i = 0; i < exp_cnt; i++) {
+			/*  update cit_in_lut depends on exposure_order_in_lbmf */
+			if (ctx->s_ctx.mode[scenario_id].exposure_order_in_lbmf ==
+				IMGSENSOR_LBMF_EXPOSURE_SE_FIRST) {
+				/* 2exp: cit_lut_a = SE / cit_lut_b = LE */
+				/* 3exp: cit_lut_a = SE / cit_lut_b = ME / cit_lut_c = LE */
+				cit_in_lut[i] = ctx->exposure[exp_cnt - 1 - i];
+			} else if (ctx->s_ctx.mode[scenario_id].exposure_order_in_lbmf ==
+				IMGSENSOR_LBMF_EXPOSURE_LE_FIRST) {
+				/* 2exp: cit_lut_a = LE / cit_lut_b = SE */
+				/* 3exp: cit_lut_a = LE / cit_lut_b = ME / cit_lut_c = SE */
+				cit_in_lut[i] = ctx->exposure[i];
+			} else {
+				DRV_LOGE(ctx, "pls assign exposure_order_in_lbmf value!\n");
+				return;
+			}
+		}
+		/* fll_a_min = readout + xx lines(margin) */
+		calc_fl_in_lut[0] =
+			ctx->s_ctx.mode[scenario_id].readout_length +
+			ctx->s_ctx.mode[scenario_id].read_margin;
+		/* fll_a = max(readout, previous shutter_b) */
+		calc_fl_in_lut[0] =
+			max(calc_fl_in_lut[0], cit_in_lut[1] + ctx->s_ctx.exposure_margin);
+		/* fll_a = min(fll_a, fll_max) */
+		ctx->frame_length_in_lut[0] =
+			min(calc_fl_in_lut[0], ctx->s_ctx.frame_length_max);
+		/* fll_b_min = readout + xx lines(margin) */
+		calc_fl_in_lut[1] =
+			ctx->s_ctx.mode[scenario_id].readout_length +
+			ctx->s_ctx.mode[scenario_id].read_margin;
+		/* fll_b = max(readout, previous shutter_c) */
+		calc_fl_in_lut[1] =
+			max(calc_fl_in_lut[1], cit_in_lut[2] + ctx->s_ctx.exposure_margin);
+		/* fll_b = min(fll_b, fll_max) */
+		ctx->frame_length_in_lut[1] =
+			min(calc_fl_in_lut[1], ctx->s_ctx.frame_length_max);
+		/* fll_c_min = readout + xx lines(margin) */
+		calc_fl_in_lut[2] =
+			ctx->s_ctx.mode[scenario_id].readout_length +
+			ctx->s_ctx.mode[scenario_id].read_margin;
+		/* fll_c = max(readout, previous shutter_a) */
+		calc_fl_in_lut[2] =
+			max(calc_fl_in_lut[2], cit_in_lut[0] + ctx->s_ctx.exposure_margin);
+		if (ctx->frame_length >=
+			(ctx->frame_length_in_lut[0] + ctx->frame_length_in_lut[1])) {
+			/* fll_c = max(fll_c, fll_mode_max-fll_b-fll_a) */
+			calc_fl_in_lut[2] =
+				max(calc_fl_in_lut[2],
+					(ctx->frame_length - ctx->frame_length_in_lut[1] -
+					ctx->frame_length_in_lut[0]));
+		}
+		/* fll_c = min(fll_c, fll_max) */
+		ctx->frame_length_in_lut[2] =
+			min(calc_fl_in_lut[2], ctx->s_ctx.frame_length_max);
+		ctx->frame_length_in_lut[3] = 0;
+		ctx->frame_length_in_lut[4] = 0;
+		/* update framelength */
+		ctx->frame_length =
+			ctx->frame_length_in_lut[0] +
+			ctx->frame_length_in_lut[1] +
+			ctx->frame_length_in_lut[2];
+		ctx->current_fps = ctx->pclk / ctx->frame_length * 10 / ctx->line_length;
+		ctx->min_frame_length = ctx->frame_length;
+		DRV_LOG(ctx,
+			"sid:%u,max_fps(input/output):%u/%u,min_fl_en:1,lut order:%u,fll(input/ctx/output_a/b/c/d/e):%u/%u/%u/%u/%u/%u/%u\n",
+			scenario_id,
+			framerate, ctx->current_fps,
+			ctx->s_ctx.mode[scenario_id].exposure_order_in_lbmf,
+			frame_length,
+			ctx->frame_length,
+			ctx->frame_length_in_lut[0],
+			ctx->frame_length_in_lut[1],
+			ctx->frame_length_in_lut[2],
+			ctx->frame_length_in_lut[3],
+			ctx->frame_length_in_lut[4]);
+		if (ctx->s_ctx.mode[scenario_id].exposure_order_in_lbmf ==
+			IMGSENSOR_LBMF_EXPOSURE_SE_FIRST) {
+			if (ctx->s_ctx.reg_addr_auto_extend ||
+				(ctx->frame_length_in_lut[0] >
+				(ctx->exposure[1] + ctx->s_ctx.mode[scenario_id].read_margin)) ||
+				(ctx->frame_length_in_lut[1] >
+				(ctx->exposure[0] + ctx->s_ctx.mode[scenario_id].read_margin)) ||
+				(ctx->frame_length_in_lut[2] >
+				(ctx->exposure[2] + ctx->s_ctx.mode[scenario_id].read_margin)))
+				set_dummy(ctx);
+		} else {
+			if (ctx->s_ctx.reg_addr_auto_extend ||
+				(ctx->frame_length_in_lut[0] >
+				(ctx->exposure[1] + ctx->s_ctx.mode[scenario_id].read_margin)) ||
+				(ctx->frame_length_in_lut[1] >
+				(ctx->exposure[2] + ctx->s_ctx.mode[scenario_id].read_margin)) ||
+				(ctx->frame_length_in_lut[2] >
+				(ctx->exposure[0] + ctx->s_ctx.mode[scenario_id].read_margin)))
+				set_dummy(ctx);
+		}
+	}
+		break;
+	default:
+		break;
+	}
+}
 
 void set_max_framerate_by_scenario(struct subdrv_ctx *ctx,
 		enum SENSOR_SCENARIO_ID_ENUM scenario_id, u32 framerate)
@@ -451,6 +1015,12 @@ void set_max_framerate_by_scenario(struct subdrv_ctx *ctx,
 		return;
 	}
 
+	if (ctx->s_ctx.mode[scenario_id].hdr_mode == HDR_RAW_LBMF_2EXP ||
+		ctx->s_ctx.mode[scenario_id].hdr_mode == HDR_RAW_LBMF_3EXP) {
+		set_max_framerate_in_lut_by_scenario(ctx, scenario_id, framerate);
+		return;
+	}
+
 	frame_length = ctx->s_ctx.mode[scenario_id].pclk / framerate * 10
 		/ ctx->s_ctx.mode[scenario_id].linelength;
 	frame_length_step = ctx->s_ctx.mode[scenario_id].framelength_step;
@@ -468,6 +1038,14 @@ void set_max_framerate_by_scenario(struct subdrv_ctx *ctx,
 		set_dummy(ctx);
 }
 
+/**
+ * @brief: This api is used to calculate framerate depending on framelength
+ * in ctx. If auto_flicker_mode is enabled, then set_max_framerate
+ * in this function might be called. Framelength in ctx might update after
+ * set_max_framerate_by_scenario or set_shutter.
+ * @param ctx: subdrv_ctx
+ * @param min_framelength_en: by enabling it, it will update framelength in ctx.
+ */
 bool set_auto_flicker(struct subdrv_ctx *ctx, bool min_framelength_en)
 {
 	u16 framerate = 0;
@@ -484,8 +1062,6 @@ bool set_auto_flicker(struct subdrv_ctx *ctx, bool min_framelength_en)
 
 	framerate = ctx->pclk / ctx->line_length * 10 / ctx->frame_length;
 
-	DRV_LOG(ctx, "cur_fps:%u, flick_en:%u, min_fl_en:%u\n",
-		framerate, ctx->autoflicker_en, min_framelength_en);
 	if (!ctx->autoflicker_en)
 		return FALSE;
 
@@ -501,6 +1077,31 @@ bool set_auto_flicker(struct subdrv_ctx *ctx, bool min_framelength_en)
 		set_max_framerate(ctx, 146, min_framelength_en);
 	else
 		return FALSE;
+
+	switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	case HDR_RAW_LBMF_3EXP:
+	{
+		DRV_LOG(ctx,
+			"sid:%u,cur_fps:%u,flick_en:%u,min_fl_en:%u,fll(ctx/output_a/b/c/d/e):%u/%u/%u/%u/%u/%u,new_fps:%llu\n",
+			ctx->current_scenario_id,
+			framerate, ctx->autoflicker_en, min_framelength_en,
+			ctx->frame_length,
+			ctx->frame_length_in_lut[0],
+			ctx->frame_length_in_lut[1],
+			ctx->frame_length_in_lut[2],
+			ctx->frame_length_in_lut[3],
+			ctx->frame_length_in_lut[4],
+			ctx->pclk / ctx->line_length * 10 / ctx->frame_length);
+	}
+		break;
+	default:
+		DRV_LOG(ctx, "cur_fps:%u, flick_en:%u, min_fl_en:%u, new_fps:%llu\n",
+			framerate, ctx->autoflicker_en, min_framelength_en,
+			ctx->pclk / ctx->line_length * 10 / ctx->frame_length);
+		break;
+	}
+
 	return TRUE;
 }
 
@@ -602,16 +1203,293 @@ void set_shutter_frame_length(struct subdrv_ctx *ctx, u32 shutter, u32 frame_len
 	/* group hold end */
 }
 
+/**
+ * @brief: set shutter for exp_cnt = 2 or 3
+ * @param ctx: subdrv_ctx
+ * @param shutters: current exposure from ae
+ * @param exp_cnt: number depends on mode frame desc
+ */
 void set_hdr_tri_shutter(struct subdrv_ctx *ctx, u64 *shutters, u16 exp_cnt)
 {
 	int i = 0;
 	u32 values[3] = {0};
+	u32 frame_length_in_lut[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
 
 	if (shutters != NULL) {
 		for (i = 0; i < 3; i++)
 			values[i] = (u32) *(shutters + i);
 	}
-	set_multi_shutter_frame_length(ctx,	values, exp_cnt, 0);
+
+	switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	case HDR_RAW_LBMF_3EXP:
+	{
+		set_multi_shutter_frame_length_in_lut(ctx,
+			values, exp_cnt, 0, frame_length_in_lut);
+	}
+		break;
+	default:
+		set_multi_shutter_frame_length(ctx, values, exp_cnt, 0);
+		break;
+	}
+}
+
+/**
+ * @brief: This api is used to set multi shutter & fll for lbmf scenario,
+ * and it differs from general api. It assigns LUT params and calculate
+ * accurate value for shutter and fll that could be set to sensor.
+ *
+ * formula:
+ * - auto mode (optional): assigned general FLL value.
+ * - manual mode:
+ * a. 2 exposure count
+ * FLL_A: max (readout, shutter_B), then min (FLL_A, frame_length_max)
+ * FLL_B: max (readout, shutter_A, FLL-FLL_A) , then min (FLL_B, frame_length_max)
+ * b. 3 exposure count
+ * FLL_A: max (readout, shutter_B), then min (FLL_A, frame_length_max)
+ * FLL_B: max (readout, shutter_C), then min (FLL_B, frame_length_max)
+ * FLL_C: max (readout, shutter_A, FLL-FLL_B-FLL_A) , then min (FLL_C, frame_length_max)
+ * Compare to set_max_framerate_by_scenario, it has one additional condition to
+ * check input framelength is valid or not.
+ *
+ * @param ctx: subdrv_ctx
+ * @param shutters: current exposure from ae
+ * @param exp_cnt: number depends on mode frame desc
+ * @param frame_length: frame length for auto mode
+ * @param frame_length_in_lut: frame length array in lut for manual mode
+ */
+void set_multi_shutter_frame_length_in_lut(struct subdrv_ctx *ctx,
+	u32 *shutters, u16 exp_cnt, u32 frame_length, u32 *frame_length_in_lut)
+{
+	int i = 0;
+	u16 last_exp_cnt = 1;
+	u32 fine_integ_line = 0;
+	u32 cit_step = 0;
+	u32 cit_in_lut[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
+	u32 calc_fl_in_lut[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
+	bool gph = !ctx->is_seamless && (ctx->s_ctx.s_gph != NULL);
+
+	ctx->frame_length = frame_length ? frame_length : ctx->frame_length;
+
+	if (exp_cnt > ARRAY_SIZE(ctx->exposure)) {
+		DRV_LOGE(ctx, "invalid exp_cnt:%u>%u\n", exp_cnt, ARRAY_SIZE(ctx->exposure));
+		exp_cnt = ARRAY_SIZE(ctx->exposure);
+	}
+	check_current_scenario_id_bound(ctx);
+
+	/* check boundary of shutter */
+	for (i = 1; i < ARRAY_SIZE(ctx->exposure); i++)
+		last_exp_cnt += ctx->exposure[i] ? 1 : 0;
+
+	fine_integ_line = ctx->s_ctx.mode[ctx->current_scenario_id].fine_integ_line;
+	cit_step = ctx->s_ctx.mode[ctx->current_scenario_id].coarse_integ_step;
+
+	/* manual mode */
+	for (i = 0; i < exp_cnt; i++) {
+		shutters[i] = FINE_INTEG_CONVERT(shutters[i], fine_integ_line);
+		shutters[i] = max(shutters[i], ctx->s_ctx.exposure_min);
+		shutters[i] = min(shutters[i], ctx->s_ctx.exposure_max);
+		if (cit_step)
+			shutters[i] = round_up(shutters[i], cit_step);
+
+		/* update frame_length_in_lut */
+		ctx->frame_length_in_lut[i] = frame_length_in_lut[i] ?
+			frame_length_in_lut[i] : ctx->frame_length_in_lut[i];
+		/* check boundary of framelength in lut */
+		ctx->frame_length_in_lut[i] =
+			min(ctx->frame_length_in_lut[i], ctx->s_ctx.frame_length_max);
+	}
+
+	for (i = 0; i < exp_cnt; i++) {
+		/* update cit_in_lut depends on exposure_order_in_lbmf */
+		if (ctx->s_ctx.mode[ctx->current_scenario_id].exposure_order_in_lbmf ==
+			IMGSENSOR_LBMF_EXPOSURE_SE_FIRST) {
+			/* 2exp: cit_lut_a = SE / cit_lut_b = LE */
+			/* 3exp: cit_lut_a = SE / cit_lut_b = ME / cit_lut_c = LE */
+			cit_in_lut[i] = shutters[exp_cnt - 1 - i];
+		} else if (ctx->s_ctx.mode[ctx->current_scenario_id].exposure_order_in_lbmf ==
+			IMGSENSOR_LBMF_EXPOSURE_LE_FIRST) {
+			/* 2exp: cit_lut_a = LE / cit_lut_b = SE */
+			/* 3exp: cit_lut_a = LE / cit_lut_b = ME / cit_lut_c = SE */
+			cit_in_lut[i] = shutters[i];
+		} else {
+			DRV_LOGE(ctx, "pls assign exposure_order_in_lbmf value!\n");
+			return;
+		}
+	}
+
+	switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	{
+		/* fll_a_min = readout + xx lines(margin) */
+		calc_fl_in_lut[0] =
+			ctx->s_ctx.mode[ctx->current_scenario_id].readout_length +
+			ctx->s_ctx.mode[ctx->current_scenario_id].read_margin;
+		/* fll_a = max(readout, current shutter_b) */
+		calc_fl_in_lut[0] =
+			max(calc_fl_in_lut[0], cit_in_lut[1] + ctx->s_ctx.exposure_margin);
+		/* fll_b_min = readout + xx lines(margin) */
+		calc_fl_in_lut[1] =
+			ctx->s_ctx.mode[ctx->current_scenario_id].readout_length +
+			ctx->s_ctx.mode[ctx->current_scenario_id].read_margin;
+		/* fll_b = max(readout, current shutter_a) */
+		calc_fl_in_lut[1] =
+			max(calc_fl_in_lut[1], cit_in_lut[0] + ctx->s_ctx.exposure_margin);
+
+		/* fll_a = max(fll_a, userInput_fll_a) */
+		ctx->frame_length_in_lut[0] =
+			max(ctx->frame_length_in_lut[0], calc_fl_in_lut[0]);
+		/* fll_a = min(fll_a, fll_max) */
+		ctx->frame_length_in_lut[0] =
+			min(ctx->frame_length_in_lut[0], ctx->s_ctx.frame_length_max);
+		/* fll_b = max(fll_b, userInput_fll_b) */
+		ctx->frame_length_in_lut[1] =
+			max(ctx->frame_length_in_lut[1], calc_fl_in_lut[1]);
+
+		if (ctx->frame_length >= ctx->frame_length_in_lut[0]) {
+			/* fll_b = max(fll_b, fll-fll_a) */
+			ctx->frame_length_in_lut[1] =
+				max(ctx->frame_length_in_lut[1],
+					ctx->frame_length - ctx->frame_length_in_lut[0]);
+		}
+		/* fll_b = min(fll_b, fll_max) */
+		ctx->frame_length_in_lut[1] =
+			min(ctx->frame_length_in_lut[1], ctx->s_ctx.frame_length_max);
+		/* lut[2] no use, and assign zero */
+		ctx->frame_length_in_lut[2] = 0;
+		/* lut[3] no use, and assign zero */
+		ctx->frame_length_in_lut[3] = 0;
+		/* lut[4] no use, and assign zero */
+		ctx->frame_length_in_lut[4] = 0;
+	}
+		break;
+	case HDR_RAW_LBMF_3EXP:
+	{
+		/* fll_a_min = readout + xx lines(margin) */
+		calc_fl_in_lut[0] =
+			ctx->s_ctx.mode[ctx->current_scenario_id].readout_length +
+			ctx->s_ctx.mode[ctx->current_scenario_id].read_margin;
+		/* fll_a = max(readout, current shutter_b) */
+		calc_fl_in_lut[0] =
+			max(calc_fl_in_lut[0], cit_in_lut[1] + ctx->s_ctx.exposure_margin);
+		/* fll_b_min = readout + xx lines(margin) */
+		calc_fl_in_lut[1] =
+			ctx->s_ctx.mode[ctx->current_scenario_id].readout_length +
+			ctx->s_ctx.mode[ctx->current_scenario_id].read_margin;
+		/* fll_b = max(readout, current shutter_c) */
+		calc_fl_in_lut[1] =
+			max(calc_fl_in_lut[1], cit_in_lut[2] + ctx->s_ctx.exposure_margin);
+		/* fll_c_min = readout + xx lines(margin) */
+		calc_fl_in_lut[2] =
+			ctx->s_ctx.mode[ctx->current_scenario_id].readout_length +
+			ctx->s_ctx.mode[ctx->current_scenario_id].read_margin;
+		/* fll_c = max(readout, current shutter_a) */
+		calc_fl_in_lut[2] =
+			max(calc_fl_in_lut[2], cit_in_lut[0] + ctx->s_ctx.exposure_margin);
+
+		/* fll_a = max(fll_a, userInput_fll_a) */
+		ctx->frame_length_in_lut[0] =
+			max(ctx->frame_length_in_lut[0], calc_fl_in_lut[0]);
+		/* fll_a = min(fll_a, fll_max) */
+		ctx->frame_length_in_lut[0] =
+			min(ctx->frame_length_in_lut[0], ctx->s_ctx.frame_length_max);
+		/* fll_b = max(fll_b, userInput_fll_b) */
+		ctx->frame_length_in_lut[1] =
+			max(ctx->frame_length_in_lut[1], calc_fl_in_lut[1]);
+		/* fll_b = min(fll_b, fll_max) */
+		ctx->frame_length_in_lut[1] =
+			min(ctx->frame_length_in_lut[1], ctx->s_ctx.frame_length_max);
+		/* fll_c = max(fll_c, userInput_fll_c) */
+		ctx->frame_length_in_lut[2] =
+			max(ctx->frame_length_in_lut[2], calc_fl_in_lut[2]);
+
+		if (ctx->frame_length >=
+			(ctx->frame_length_in_lut[0] + ctx->frame_length_in_lut[1])) {
+			/* fll_c = max(fll_c, fll-fll_b-fll_a) */
+			ctx->frame_length_in_lut[2] =
+				max(ctx->frame_length_in_lut[2],
+					(ctx->frame_length - ctx->frame_length_in_lut[1] -
+					ctx->frame_length_in_lut[0]));
+		}
+		/* fll_c = min(fll_c, fll_max) */
+		ctx->frame_length_in_lut[2] =
+			min(ctx->frame_length_in_lut[2], ctx->s_ctx.frame_length_max);
+		/* lut[3] no use, and assign zero */
+		ctx->frame_length_in_lut[3] = 0;
+		/* lut[4] no use, and assign zero */
+		ctx->frame_length_in_lut[4] = 0;
+	}
+		break;
+	default:
+		break;
+	}
+
+	/* restore shutter & update framelength */
+	memset(ctx->exposure, 0, sizeof(ctx->exposure));
+	ctx->frame_length = 0;
+	for (i = 0; i < exp_cnt; i++) {
+		ctx->exposure[i] = shutters[i];
+		ctx->frame_length += ctx->frame_length_in_lut[i];
+	}
+	/* check boundary of framelength */
+	ctx->frame_length =	max(ctx->frame_length, ctx->min_frame_length);
+	/* group hold start */
+	if (gph)
+		ctx->s_ctx.s_gph((void *)ctx, 1);
+	/* enable auto extend */
+	if (ctx->s_ctx.reg_addr_auto_extend)
+		set_i2c_buffer(ctx, ctx->s_ctx.reg_addr_auto_extend, 0x01);
+	/* write framelength */
+	switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	case HDR_RAW_LBMF_3EXP:
+	{
+		set_auto_flicker(ctx, 0);
+		write_frame_length_in_lut(ctx, ctx->frame_length, ctx->frame_length_in_lut);
+	}
+		break;
+	default:
+		break;
+	}
+
+	/* write shutter: LUT register differs from DOL */
+	if (ctx->s_ctx.reg_addr_exposure_lshift != PARAM_UNDEFINED)
+		set_i2c_buffer(ctx, ctx->s_ctx.reg_addr_exposure_lshift, 0);
+	for (i = 0; i < 3; i++) {
+		if (cit_in_lut[i]) {
+			if (ctx->s_ctx.reg_addr_exposure_in_lut[i].addr[2]) {
+				set_i2c_buffer(ctx,	ctx->s_ctx.reg_addr_exposure_in_lut[i].addr[0],
+					(cit_in_lut[i] >> 16) & 0xFF);
+				set_i2c_buffer(ctx,	ctx->s_ctx.reg_addr_exposure_in_lut[i].addr[1],
+					(cit_in_lut[i] >> 8) & 0xFF);
+				set_i2c_buffer(ctx,	ctx->s_ctx.reg_addr_exposure_in_lut[i].addr[2],
+					cit_in_lut[i] & 0xFF);
+			} else {
+				set_i2c_buffer(ctx,	ctx->s_ctx.reg_addr_exposure_in_lut[i].addr[0],
+					(cit_in_lut[i] >> 8) & 0xFF);
+				set_i2c_buffer(ctx,	ctx->s_ctx.reg_addr_exposure_in_lut[i].addr[1],
+					cit_in_lut[i] & 0xFF);
+			}
+		}
+	}
+	DRV_LOG(ctx,
+		"sid:%u,shutter(input/lut):0x%x/%x/%x,%x/%x/%x,flInLUT(input/ctx/output_a/b/c/d/e):%u/%u/%u/%u/%u/%u/%u,flick_en:%u\n",
+		ctx->current_scenario_id,
+		shutters[0], shutters[1], shutters[2],
+		cit_in_lut[0], cit_in_lut[1], cit_in_lut[2],
+		frame_length, ctx->frame_length,
+		ctx->frame_length_in_lut[0],
+		ctx->frame_length_in_lut[1],
+		ctx->frame_length_in_lut[2],
+		ctx->frame_length_in_lut[3],
+		ctx->frame_length_in_lut[4],
+		ctx->autoflicker_en);
+	if (!ctx->ae_ctrl_gph_en) {
+		if (gph)
+			ctx->s_ctx.s_gph((void *)ctx, 0);
+		commit_i2c_buffer(ctx);
+	}
+	/* group hold end */
 }
 
 void set_multi_shutter_frame_length(struct subdrv_ctx *ctx,
@@ -777,7 +1655,95 @@ void set_hdr_tri_gain(struct subdrv_ctx *ctx, u64 *gains, u16 exp_cnt)
 		for (i = 0; i < 3; i++)
 			values[i] = (u32) *(gains + i);
 	}
-	set_multi_gain(ctx,	values, exp_cnt);
+
+	switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	case HDR_RAW_LBMF_3EXP:
+	{
+		set_multi_gain_in_lut(ctx, values, exp_cnt);
+	}
+		break;
+	default:
+		set_multi_gain(ctx,	values, exp_cnt);
+		break;
+	}
+}
+
+/**
+ * @brief: This api is used to set multi gain for lbmf scenario,
+ * and it differs from general api. It assigns LUT params and calculate
+ * accurate value for gain that could be set to sensor.
+ * @param ctx: subdrv_ctx
+ * @param gains: current gain from ae
+ * @param exp_cnt: number depends on mode frame desc
+ */
+void set_multi_gain_in_lut(struct subdrv_ctx *ctx, u32 *gains, u16 exp_cnt)
+{
+	int i = 0;
+	u16 ana_gain_in_lut[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
+	bool gph = !ctx->is_seamless && (ctx->s_ctx.s_gph != NULL);
+
+	if (exp_cnt > ARRAY_SIZE(ctx->ana_gain)) {
+		DRV_LOGE(ctx,
+			"invalid exp_cnt:%u>%u\n",
+			exp_cnt, ARRAY_SIZE(ctx->ana_gain));
+		exp_cnt = ARRAY_SIZE(ctx->ana_gain);
+	}
+	for (i = 0; i < exp_cnt; i++) {
+		/* check boundary of gain */
+		gains[i] = max(gains[i], ctx->s_ctx.ana_gain_min);
+		gains[i] = min(gains[i], ctx->s_ctx.ana_gain_max);
+		/* mapping of gain to register value */
+		if (ctx->s_ctx.g_gain2reg != NULL)
+			gains[i] = ctx->s_ctx.g_gain2reg(gains[i]);
+		else
+			gains[i] = gain2reg(gains[i]);
+	}
+	for (i = 0; i < exp_cnt; i++) {
+		/* update ana_gain_in_lut depends on exposure_order_in_lbmf */
+		if (ctx->s_ctx.mode[ctx->current_scenario_id].exposure_order_in_lbmf ==
+			IMGSENSOR_LBMF_EXPOSURE_SE_FIRST) {
+			/* 2exp: ana_gain_lut_a = SE / ana_gain_lut_b = LE */
+			/* 3exp: ana_gain_lut_a = SE / ana_gain_lut_b = ME / ana_gain_lut_c = LE */
+			ana_gain_in_lut[i] = gains[exp_cnt - 1 - i];
+		} else if (ctx->s_ctx.mode[ctx->current_scenario_id].exposure_order_in_lbmf ==
+			IMGSENSOR_LBMF_EXPOSURE_LE_FIRST) {
+			/* 2exp: ana_gain_lut_a = LE / ana_gain_lut_b = SE */
+			/* 3exp: ana_gain_lut_a = LE / ana_gain_lut_b = ME / ana_gain_lut_c = SE */
+			ana_gain_in_lut[i] = gains[i];
+		} else {
+			DRV_LOGE(ctx, "pls assign exposure_order_in_lbmf value!\n");
+			return;
+		}
+	}
+	/* restore gain */
+	memset(ctx->ana_gain, 0, sizeof(ctx->ana_gain));
+	for (i = 0; i < exp_cnt; i++)
+		ctx->ana_gain[i] = gains[i];
+	/* group hold start */
+	if (gph && !ctx->ae_ctrl_gph_en)
+		ctx->s_ctx.s_gph((void *)ctx, 1);
+
+	/* write gain: update ana gain addr and set gain for lbmf */
+	for (i = 0; i < exp_cnt; i++) {
+		if (ana_gain_in_lut[i]) {
+			set_i2c_buffer(ctx,
+				ctx->s_ctx.reg_addr_ana_gain_in_lut[i].addr[0],
+				(ana_gain_in_lut[i] >> 8) & 0xFF);
+			set_i2c_buffer(ctx,
+				ctx->s_ctx.reg_addr_ana_gain_in_lut[i].addr[1],
+				ana_gain_in_lut[i] & 0xFF);
+		}
+	}
+	DRV_LOG(ctx,
+		"sid:%u,gain(input/lut):0x%x/%x/%x,%x/%x/%x\n",
+		ctx->current_scenario_id,
+		gains[0], gains[1], gains[2],
+		ana_gain_in_lut[0], ana_gain_in_lut[1], ana_gain_in_lut[2]);
+	if (gph)
+		ctx->s_ctx.s_gph((void *)ctx, 0);
+	commit_i2c_buffer(ctx);
+	/* group hold end */
 }
 
 void set_multi_gain(struct subdrv_ctx *ctx, u32 *gains, u16 exp_cnt)
@@ -854,11 +1820,104 @@ static u16 dgain2reg(struct subdrv_ctx *ctx, u32 dgain)
 	return ret;
 }
 
+/**
+ * @brief: This api is used to set multi digital gain for lbmf scenario,
+ * and it differs from general api. It assigns LUT params and calculate
+ * accurate value for gain that could be set to sensor.
+ * @param ctx: subdrv_ctx
+ * @param gains: current digital gain from ae
+ * @param exp_cnt: number depends on mode frame desc
+ */
+static void set_multi_dig_gain_in_lut(struct subdrv_ctx *ctx,
+	u32 *gains, u16 exp_cnt)
+{
+	int i = 0;
+	u16 dig_gain_in_lut[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
+	bool gph = !ctx->is_seamless && (ctx->s_ctx.s_gph != NULL);
+
+	// skip if no porting digital gain
+	if (!ctx->s_ctx.reg_addr_dig_gain_in_lut[0].addr[0])
+		return;
+
+	if (exp_cnt > ARRAY_SIZE(ctx->dig_gain)) {
+		DRV_LOGE(ctx, "invalid exp_cnt:%u>%u\n", exp_cnt, ARRAY_SIZE(ctx->dig_gain));
+		exp_cnt = ARRAY_SIZE(ctx->dig_gain);
+	}
+	for (i = 0; i < exp_cnt; i++) {
+		/* check boundary of gain */
+		gains[i] = max(gains[i], ctx->s_ctx.dig_gain_min);
+		gains[i] = min(gains[i], ctx->s_ctx.dig_gain_max);
+		gains[i] = dgain2reg(ctx, gains[i]);
+	}
+	for (i = 0; i < exp_cnt; i++) {
+		/* update dig_gain_in_lut depends on exposure_order_in_lbmf */
+		if (ctx->s_ctx.mode[ctx->current_scenario_id].exposure_order_in_lbmf ==
+			IMGSENSOR_LBMF_EXPOSURE_SE_FIRST) {
+			/* 2exp: dig_gain_lut_a = SE / dig_gain_lut_b = LE */
+			/* 3exp: dig_gain_lut_a = SE / dig_gain_lut_b = ME / dig_gain_lut_c = LE */
+			dig_gain_in_lut[i] = gains[exp_cnt - 1 - i];
+		} else if (ctx->s_ctx.mode[ctx->current_scenario_id].exposure_order_in_lbmf ==
+			IMGSENSOR_LBMF_EXPOSURE_LE_FIRST) {
+			/* 2exp: dig_gain_lut_a = LE / dig_gain_lut_b = SE */
+			/* 3exp: dig_gain_lut_a = LE / dig_gain_lut_b = ME / dig_gain_lut_c = SE */
+			dig_gain_in_lut[i] = gains[i];
+		} else {
+			DRV_LOGE(ctx, "pls assign exposure_order_in_lbmf value!\n");
+			return;
+		}
+	}
+	/* restore gain */
+	memset(ctx->dig_gain, 0, sizeof(ctx->dig_gain));
+	for (i = 0; i < exp_cnt; i++)
+		ctx->dig_gain[i] = gains[i];
+
+	/* group hold start */
+	if (gph && !ctx->ae_ctrl_gph_en)
+		ctx->s_ctx.s_gph((void *)ctx, 1);
+
+	/* write gain: update dig gain addr and set gain for lbmf */
+	for (i = 0;
+		(i < ARRAY_SIZE(dig_gain_in_lut)) && (i < ARRAY_SIZE(ctx->s_ctx.reg_addr_dig_gain_in_lut));
+		i++) {
+		if (!dig_gain_in_lut[i])
+			continue; // skip zero gain setting
+
+		if (ctx->s_ctx.reg_addr_dig_gain_in_lut[i].addr[0]) {
+			set_i2c_buffer(ctx,
+				ctx->s_ctx.reg_addr_dig_gain_in_lut[i].addr[0],
+				(dig_gain_in_lut[i] >> 8) & 0x0F);
+		}
+		if (ctx->s_ctx.reg_addr_dig_gain_in_lut[i].addr[1]) {
+			set_i2c_buffer(ctx,
+				ctx->s_ctx.reg_addr_dig_gain_in_lut[i].addr[1],
+				dig_gain_in_lut[i] & 0xFF);
+		}
+	}
+
+	DRV_LOG(ctx,
+		"sid:%u,dgain(ori/lut):0x%x/%x/%x,%x/%x/%x\n",
+		ctx->current_scenario_id,
+		gains[0], gains[1], gains[2],
+		dig_gain_in_lut[0], dig_gain_in_lut[1], dig_gain_in_lut[2]);
+	if (!ctx->ae_ctrl_gph_en) {
+		if (gph)
+			ctx->s_ctx.s_gph((void *)ctx, 0);
+		commit_i2c_buffer(ctx);
+	}
+	/* group hold end */
+}
+
 void set_multi_dig_gain(struct subdrv_ctx *ctx, u32 *gains, u16 exp_cnt)
 {
 	int i = 0;
 	u16 rg_gains[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
 	bool gph = !ctx->is_seamless && (ctx->s_ctx.s_gph != NULL);
+
+	if (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode == HDR_RAW_LBMF_2EXP ||
+		ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode == HDR_RAW_LBMF_3EXP) {
+		set_multi_dig_gain_in_lut(ctx, gains, exp_cnt);
+		return;
+	}
 
 	// skip if no porting digital gain
 	if (!ctx->s_ctx.reg_addr_dig_gain[0].addr[0])
@@ -1068,7 +2127,7 @@ void get_min_shutter_by_scenario(struct subdrv_ctx *ctx,
 		u64 *min_shutter, u64 *exposure_step)
 {
 	if (scenario_id >= ctx->s_ctx.sensor_mode_num) {
-		DRV_LOG(ctx, "invalid cur_sid:%u, mode_num:%u set default\n",
+		DRV_LOGE(ctx, "invalid cur_sid:%u, mode_num:%u set default\n",
 			scenario_id, ctx->s_ctx.sensor_mode_num);
 		scenario_id = 0;
 	}
@@ -1247,6 +2306,9 @@ void extend_frame_length(struct subdrv_ctx *ctx, u32 ns)
 		(u64)ctx->line_length * 1000000000) / (u64)ctx->pclk);
 
 	check_current_scenario_id_bound(ctx);
+	if (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode == HDR_RAW_LBMF_2EXP ||
+		ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode == HDR_RAW_LBMF_3EXP)
+		return;
 	readoutLength = ctx->s_ctx.mode[ctx->current_scenario_id].readout_length;
 	readMargin = ctx->s_ctx.mode[ctx->current_scenario_id].read_margin;
 
@@ -1394,13 +2456,22 @@ void get_stagger_max_exp_time(struct subdrv_ctx *ctx,
 
 	switch (vc) {
 	case VC_STAGGER_ME:
+	{
+		/* lbmf use the same vc feature to deliver raw path, so we need to extend the condition */
 		if (ctx->s_ctx.mode[scenario_id].hdr_mode == HDR_RAW_STAGGER_2EXP ||
-			ctx->s_ctx.mode[scenario_id].hdr_mode == HDR_RAW_STAGGER_3EXP)
+			ctx->s_ctx.mode[scenario_id].hdr_mode == HDR_RAW_STAGGER_3EXP ||
+			ctx->s_ctx.mode[scenario_id].hdr_mode == HDR_RAW_LBMF_2EXP ||
+			ctx->s_ctx.mode[scenario_id].hdr_mode == HDR_RAW_LBMF_3EXP)
 			*exposure_max = ctx->s_ctx.exposure_max;
+	}
 		break;
 	case VC_STAGGER_SE:
-		if (ctx->s_ctx.mode[scenario_id].hdr_mode == HDR_RAW_STAGGER_3EXP)
+	{
+		/* lbmf use the same vc feature to deliver raw path, so we need to extend the condition */
+		if (ctx->s_ctx.mode[scenario_id].hdr_mode == HDR_RAW_STAGGER_3EXP ||
+			ctx->s_ctx.mode[scenario_id].hdr_mode == HDR_RAW_LBMF_3EXP)
 			*exposure_max = ctx->s_ctx.exposure_max;
+	}
 		break;
 	case VC_STAGGER_NE:
 	default:
@@ -1526,10 +2597,16 @@ void get_exposure_count_by_scenario(struct subdrv_ctx *ctx,
 
 	switch (ctx->s_ctx.mode[scenario_id].hdr_mode) {
 	case HDR_RAW_STAGGER_2EXP:
+	case HDR_RAW_LBMF_2EXP:
+	{
 		exp_cnt = 2;
+	}
 		break;
 	case HDR_RAW_STAGGER_3EXP:
+	case HDR_RAW_LBMF_3EXP:
+	{
 		exp_cnt = 3;
+	}
 		break;
 	default:
 		exp_cnt = 1;
@@ -1660,6 +2737,7 @@ int common_open(struct subdrv_ctx *ctx)
 	ctx->pclk = ctx->s_ctx.mode[scenario_id].pclk;
 	ctx->line_length = ctx->s_ctx.mode[scenario_id].linelength;
 	ctx->frame_length = ctx->s_ctx.mode[scenario_id].framelength;
+	ctx->frame_length_rg = ctx->frame_length;
 	ctx->current_fps = 10 * ctx->pclk / ctx->line_length / ctx->frame_length;
 	ctx->readout_length = ctx->s_ctx.mode[scenario_id].readout_length;
 	ctx->read_margin = ctx->s_ctx.mode[scenario_id].read_margin;
@@ -1675,6 +2753,32 @@ int common_open(struct subdrv_ctx *ctx)
 	ctx->sof_cnt = 0;
 	ctx->ref_sof_cnt = 0;
 	ctx->is_streaming = 0;
+	switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	{
+		memset(ctx->frame_length_in_lut, 0,
+			sizeof(ctx->frame_length_in_lut));
+		ctx->frame_length_in_lut[0] = ctx->readout_length + ctx->read_margin;
+		ctx->frame_length_in_lut[1] = ctx->frame_length - ctx->frame_length_in_lut[0];
+		memcpy(ctx->frame_length_in_lut_rg, ctx->frame_length_in_lut,
+			sizeof(ctx->frame_length_in_lut_rg));
+	}
+		break;
+	case HDR_RAW_LBMF_3EXP:
+	{
+		memset(ctx->frame_length_in_lut, 0,
+			sizeof(ctx->frame_length_in_lut));
+		ctx->frame_length_in_lut[0] = ctx->readout_length + ctx->read_margin;
+		ctx->frame_length_in_lut[1] = ctx->readout_length + ctx->read_margin;
+		ctx->frame_length_in_lut[2] = ctx->frame_length -
+			ctx->frame_length_in_lut[1] - ctx->frame_length_in_lut[0];
+		memcpy(ctx->frame_length_in_lut_rg, ctx->frame_length_in_lut,
+			sizeof(ctx->frame_length_in_lut_rg));
+	}
+		break;
+	default:
+		break;
+	}
 
 	return ERROR_NONE;
 }
@@ -1746,11 +2850,38 @@ void update_mode_info(struct subdrv_ctx *ctx, enum SENSOR_SCENARIO_ID_ENUM scena
 	ctx->pclk = ctx->s_ctx.mode[scenario_id].pclk;
 	ctx->line_length = ctx->s_ctx.mode[scenario_id].linelength;
 	ctx->frame_length = ctx->s_ctx.mode[scenario_id].framelength;
+	ctx->frame_length_rg = ctx->frame_length;
 	ctx->current_fps = 10 * ctx->pclk / ctx->line_length / ctx->frame_length;
 	ctx->readout_length = ctx->s_ctx.mode[scenario_id].readout_length;
 	ctx->read_margin = ctx->s_ctx.mode[scenario_id].read_margin;
 	ctx->min_frame_length = ctx->frame_length;
 	ctx->autoflicker_en = FALSE;
+	switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	{
+		memset(ctx->frame_length_in_lut, 0,
+			sizeof(ctx->frame_length_in_lut));
+		ctx->frame_length_in_lut[0] = ctx->readout_length + ctx->read_margin;
+		ctx->frame_length_in_lut[1] = ctx->frame_length - ctx->frame_length_in_lut[0];
+		memcpy(ctx->frame_length_in_lut_rg, ctx->frame_length_in_lut,
+			sizeof(ctx->frame_length_in_lut_rg));
+	}
+		break;
+	case HDR_RAW_LBMF_3EXP:
+	{
+		memset(ctx->frame_length_in_lut, 0,
+			sizeof(ctx->frame_length_in_lut));
+		ctx->frame_length_in_lut[0] = ctx->readout_length + ctx->read_margin;
+		ctx->frame_length_in_lut[1] = ctx->readout_length + ctx->read_margin;
+		ctx->frame_length_in_lut[2] = ctx->frame_length -
+			ctx->frame_length_in_lut[1] - ctx->frame_length_in_lut[0];
+		memcpy(ctx->frame_length_in_lut_rg, ctx->frame_length_in_lut,
+			sizeof(ctx->frame_length_in_lut_rg));
+	}
+		break;
+	default:
+		break;
+	}
 }
 
 bool check_is_no_crop(struct subdrv_ctx *ctx, enum SENSOR_SCENARIO_ID_ENUM scenario_id)
@@ -2106,6 +3237,22 @@ int common_feature_control(struct subdrv_ctx *ctx, MSDK_SENSOR_FEATURE_ENUM feat
 		get_exposure_count_by_scenario(ctx,
 			(enum SENSOR_SCENARIO_ID_ENUM)*feature_data,
 			(u32 *)(feature_data + 1));
+		break;
+	case SENSOR_FEATURE_SET_FRAMELENGTH_IN_LUT:
+	{
+		set_frame_length_in_lut(ctx,
+			(u32) (*feature_data),
+			(u32 *) (*(feature_data + 1)));
+	}
+		break;
+	case SENSOR_FEATURE_SET_MULTI_SHUTTER_FRAME_TIME_IN_LUT:
+	{
+		set_multi_shutter_frame_length_in_lut(ctx,
+			(u32 *)(*feature_data),
+			(u16) (*(feature_data + 1)),
+			(u32) (*(feature_data + 2)),
+			(u32 *) (*(feature_data + 3)));
+	}
 		break;
 	default:
 		break;

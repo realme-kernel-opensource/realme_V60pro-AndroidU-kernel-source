@@ -681,6 +681,8 @@ static struct subdrv_mode_struct mode_struct[] = {
 		.csi_param = {
 			.cphy_settle = 63,
 		},
+		.exposure_order_in_lbmf = IMGSENSOR_LBMF_EXPOSURE_SE_FIRST,
+		.mode_type_in_lbmf = IMGSENSOR_LBMF_MODE_MANUAL,
 	},
 };
 
@@ -851,11 +853,8 @@ static int get_sensor_temperature(void *arg)
 		temperature_convert = -20;
 	else
 		temperature_convert = (char)temperature | 0xFFFFFF00;
-#ifdef TRIAL_RUN_EN
-	DRV_LOG_MUST(ctx, "temperature: %d degrees\n", temperature_convert);
-#else
+
 	DRV_LOG(ctx, "temperature: %d degrees\n", temperature_convert);
-#endif
 	return temperature_convert;
 }
 
@@ -891,11 +890,7 @@ static void imx888_seamless_switch(struct subdrv_ctx *ctx, u8 *para, u32 *len)
 		DRV_LOGE(ctx, "no ae_ctrl input");
 
 	check_current_scenario_id_bound(ctx);
-#ifdef TRIAL_RUN_EN
-	DRV_LOG_MUST(ctx, "E: set seamless switch %u %u\n", ctx->current_scenario_id, scenario_id);
-#else
 	DRV_LOG(ctx, "E: set seamless switch %u %u\n", ctx->current_scenario_id, scenario_id);
-#endif
 	if (!ctx->extend_frame_length_en)
 		DRV_LOGE(ctx, "please extend_frame_length before seamless_switch!\n");
 	ctx->extend_frame_length_en = FALSE;
@@ -917,9 +912,9 @@ static void imx888_seamless_switch(struct subdrv_ctx *ctx, u8 *para, u32 *len)
 	}
 
 	ctx->is_seamless = TRUE;
-	update_mode_info(ctx, scenario_id);
 
 	subdrv_i2c_wr_u8(ctx, 0x0104, 0x01);
+	subdrv_i2c_wr_u8(ctx, ctx->s_ctx.reg_addr_fast_mode, 0x02);
 	switch (ctx->s_ctx.mode[scenario_id].hdr_mode) {
 	case HDR_RAW_LBMF_2EXP:
 	case HDR_RAW_LBMF_3EXP:
@@ -927,14 +922,28 @@ static void imx888_seamless_switch(struct subdrv_ctx *ctx, u8 *para, u32 *len)
 		/* For taget scenario which is lbmf mode,
 		 * implement the seamless configure register.
 		 */
-		subdrv_i2c_wr_u8(ctx, 0x3010, 0x02);
 		subdrv_i2c_wr_u8(ctx, ctx->s_ctx.reg_addr_fast_mode_in_lbmf, 0x1 << 2);
 	}
 		break;
 	default:
-		subdrv_i2c_wr_u8(ctx, 0x3010, 0x02);
 		break;
 	}
+
+	switch (ctx->s_ctx.mode[ctx->current_scenario_id].hdr_mode) {
+	case HDR_RAW_LBMF_2EXP:
+	case HDR_RAW_LBMF_3EXP:
+	{
+		/* For previous scenario which is lbmf mode,
+		 * implement the seamless configure register.
+		 */
+		subdrv_i2c_wr_u8(ctx, ctx->s_ctx.reg_addr_fast_mode_in_lbmf, 0x1 << 2);
+	}
+		break;
+	default:
+		break;
+	}
+
+	update_mode_info(ctx, scenario_id);
 	i2c_table_write(ctx,
 		ctx->s_ctx.mode[scenario_id].seamless_switch_mode_setting_table,
 		ctx->s_ctx.mode[scenario_id].seamless_switch_mode_setting_len);
@@ -955,20 +964,20 @@ static void imx888_seamless_switch(struct subdrv_ctx *ctx, u8 *para, u32 *len)
 			break;
 		case HDR_RAW_LBMF_2EXP:
 		{
-			// u32 frame_length_in_lut[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
+			u32 frame_length_in_lut[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
 
-			// set_multi_shutter_frame_length_in_lut(ctx,
-			// ae_ctrl, 2, 0, frame_length_in_lut);
-			// set_multi_gain_in_lut(ctx, ae_ctrl + 5, 2);
+			set_multi_shutter_frame_length_in_lut(ctx,
+			ae_ctrl, 2, 0, frame_length_in_lut);
+			set_multi_gain_in_lut(ctx, ae_ctrl + 5, 2);
 		}
 			break;
 		case HDR_RAW_LBMF_3EXP:
 		{
-			// u32 frame_length_in_lut[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
+			u32 frame_length_in_lut[IMGSENSOR_STAGGER_EXPOSURE_CNT] = {0};
 
-			// set_multi_shutter_frame_length_in_lut(ctx,
-			// ae_ctrl, 3, 0, frame_length_in_lut);
-			// set_multi_gain_in_lut(ctx, ae_ctrl + 5, 3);
+			set_multi_shutter_frame_length_in_lut(ctx,
+			ae_ctrl, 3, 0, frame_length_in_lut);
+			set_multi_gain_in_lut(ctx, ae_ctrl + 5, 3);
 		}
 			break;
 		default:
@@ -984,11 +993,7 @@ static void imx888_seamless_switch(struct subdrv_ctx *ctx, u8 *para, u32 *len)
 	ctx->fast_mode_on = TRUE;
 	ctx->ref_sof_cnt = ctx->sof_cnt;
 	ctx->is_seamless = FALSE;
-#ifdef TRIAL_RUN_EN
-	DRV_LOG_MUST(ctx, "X: set seamless switch done\n");
-#else
 	DRV_LOG(ctx, "X: set seamless switch done\n");
-#endif
 }
 
 static void imx888_set_test_pattern(struct subdrv_ctx *ctx, u8 *para, u32 *len)
@@ -1029,22 +1034,13 @@ static int init_ctx(struct subdrv_ctx *ctx,	struct i2c_client *i2c_client, u8 i2
 
 static int vsync_notify(struct subdrv_ctx *ctx,	unsigned int sof_cnt)
 {
-#ifdef TRIAL_RUN_EN
-	DRV_LOG_MUST(ctx, "sof_cnt(%u) ctx->ref_sof_cnt(%u) ctx->fast_mode_on(%d)",
-		sof_cnt, ctx->ref_sof_cnt, ctx->fast_mode_on);
-#else
 	DRV_LOG(ctx, "sof_cnt(%u) ctx->ref_sof_cnt(%u) ctx->fast_mode_on(%d)",
 		sof_cnt, ctx->ref_sof_cnt, ctx->fast_mode_on);
-#endif
 	if (ctx->fast_mode_on && (sof_cnt > ctx->ref_sof_cnt)) {
 		ctx->fast_mode_on = FALSE;
 		ctx->ref_sof_cnt = 0;
-#ifdef TRIAL_RUN_EN
-		DRV_LOG_MUST(ctx, "seamless_switch disabled.");
-#else
 		DRV_LOG(ctx, "seamless_switch disabled.");
-#endif
-		set_i2c_buffer(ctx, 0x3010, 0x00);
+		set_i2c_buffer(ctx, ctx->s_ctx.reg_addr_fast_mode, 0x00);
 		commit_i2c_buffer(ctx);
 	}
 	return 0;

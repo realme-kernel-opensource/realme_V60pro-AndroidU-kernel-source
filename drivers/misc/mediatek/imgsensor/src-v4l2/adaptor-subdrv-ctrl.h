@@ -174,4 +174,11 @@ int common_get_csi_param(struct subdrv_ctx *ctx,
 	enum SENSOR_SCENARIO_ID_ENUM scenario_id,
 	struct mtk_csi_param *csi_param);
 int common_update_sof_cnt(struct subdrv_ctx *ctx, u32 sof_cnt);
+void write_frame_length_in_lut(struct subdrv_ctx *ctx,
+	u32 fll, u32 *fll_in_lut);
+void set_frame_length_in_lut(struct subdrv_ctx *ctx,
+	u32 frame_length, u32 *frame_length_in_lut);
+void set_multi_shutter_frame_length_in_lut(struct subdrv_ctx *ctx,
+	u32 *shutters, u16 shutter_cnt,	u32 frame_length, u32 *frame_length_in_lut);
+void set_multi_gain_in_lut(struct subdrv_ctx *ctx, u32 *gains, u16 exp_cnt);
 #endif
