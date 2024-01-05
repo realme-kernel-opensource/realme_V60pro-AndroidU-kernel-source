@@ -3592,6 +3592,8 @@ int mtk_cam_hdr_buf_update(struct vb2_buffer *vb,
 	int data_offset;
 	bool is_rgbw = mtk_cam_scen_is_rgbw_enabled(scen);
 	int num_of_plane = is_rgbw ? 2 : 1;
+	int exp_order = mtk_cam_scen_get_exp_order(scen);
+	int _exp = 0;
 
 	if (scenario != STAGGER_M2M)
 		desc_id = node->desc.id - MTK_RAW_SOURCE_BEGIN;
@@ -3604,22 +3606,23 @@ int mtk_cam_hdr_buf_update(struct vb2_buffer *vb,
 			mtk_cam_mstream_buf_update(req, pipe_id, scen,
 						desc_id, i, vb, f);
 		} else if (exp_num == 3) {
+			_exp = (exp_order == MTK_CAM_EXP_LE_SE) ? i : (exp_num - i - 1);
 			// TODO: RGBW 3 DOL
-			if (i == 0) { /* camsv1*/
+			if (_exp == 0) { /* camsv1*/
 				int in_node = MTKCAM_IPI_RAW_RAWI_2;
 
 				frame_param->img_ins[in_node - MTKCAM_IPI_RAW_RAWI_2].buf[0]
 					.iova = buf->daddr + data_offset;
 				frame_param->img_ins[in_node - MTKCAM_IPI_RAW_RAWI_2].buf[0]
 					.size = sizeimage;
-			} else if (i == 1) { /*camsv2*/
+			} else if (_exp == 1) { /*camsv2*/
 				int in_node = MTKCAM_IPI_RAW_RAWI_3;
 
 				frame_param->img_ins[in_node - MTKCAM_IPI_RAW_RAWI_2].buf[0]
 				.iova = buf->daddr + data_offset;
 				frame_param->img_ins[in_node - MTKCAM_IPI_RAW_RAWI_2].buf[0]
 					.size = sizeimage;
-			} else if (i == 2) { /*raw*/
+			} else if (_exp == 2) { /*raw*/
 				if (scenario == STAGGER_M2M) {
 					int in_node = MTKCAM_IPI_RAW_RAWI_5;
 
@@ -3643,7 +3646,8 @@ int mtk_cam_hdr_buf_update(struct vb2_buffer *vb,
 				}
 			}
 		} else if (exp_num == 2) {
-			if (i == 0) { /* camsv1*/
+			_exp = (exp_order == MTK_CAM_EXP_LE_SE) ? i : (exp_num - i - 1);
+			if (_exp == 0) { /* camsv1*/
 				int in_node = MTKCAM_IPI_RAW_RAWI_2;
 
 				frame_param->img_ins[in_node - MTKCAM_IPI_RAW_RAWI_2].buf[0]
@@ -3657,7 +3661,7 @@ int mtk_cam_hdr_buf_update(struct vb2_buffer *vb,
 					frame_param->img_ins[MTK_CAM_IMGO_W_IMG_IN_R2_IDX].buf[0]
 					.size = sizeimage;
 				}
-			} else if (i == 1) { /*raw*/
+			} else if (_exp == 1) { /*raw*/
 				if (scenario == STAGGER_M2M) {
 					int in_node = MTKCAM_IPI_RAW_RAWI_5;
 
@@ -7287,14 +7291,15 @@ void mtk_cam_dev_req_enqueue(struct mtk_cam_device *cam,
 				scen = req_stream_data->feature.scen;
 				spin_lock_irqsave(&sensor_ctrl->drained_check_lock, flags);
 				drained_seq_no = atomic_read(&sensor_ctrl->last_drained_seq_no);
-				dev_dbg(cam->dev, "%s: feature s_data(%d) scen(%s)\n",
+				dev_dbg(cam->dev, "%s: feature s_data(%d) scen(%s) drained_seq_no(%d)\n",
 					__func__, req_stream_data->frame_seq_no,
-					scen->dbg_str);
+					scen->dbg_str, drained_seq_no);
 				/* TBC: Ryan, should we use scen_active? */
 				if (mtk_cam_scen_is_sensor_normal(scen) ||
 				    (mtk_cam_scen_is_mstream(scen) &&
 				     scen->scen.mstream.type == MTK_CAM_MSTREAM_1_EXPOSURE) ||
-				     mtk_cam_scen_is_ext_isp(scen)) {
+				     mtk_cam_scen_is_ext_isp(scen) ||
+				     mtk_cam_scen_is_lbmf(scen)) {
 					/* check if deadline timer drained ever triggered */
 					/* should exclude sensor set in below <= second request */
 					if (atomic_read(&sensor_ctrl->sensor_enq_seq_no) ==

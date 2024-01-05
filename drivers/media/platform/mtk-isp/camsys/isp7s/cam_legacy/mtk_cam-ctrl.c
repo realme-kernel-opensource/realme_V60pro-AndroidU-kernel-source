@@ -1718,8 +1718,8 @@ static void mtk_cam_try_set_sensor(struct mtk_cam_ctx *ctx)
 			} else if (state_entry->estate <= E_STATE_SENSOR) {
 				spin_unlock(&sensor_ctrl->camsys_state_lock);
 				dev_dbg(ctx->cam->dev,
-					 "[%s] wrong state:%d (sensor workqueue delay)\n",
-					 __func__, state_entry->estate);
+					 "[%s] wrong state:%d (sensor workqueue delay) seq:%d\n",
+					 __func__, state_entry->estate, sensor_seq_no_next);
 				return;
 			} else if (mtk_cam_ctx_has_raw(ctx) &&
 				mtk_cam_scen_is_ext_isp(&ctx->pipe->scen_active) &&
@@ -1916,6 +1916,10 @@ static void mtk_cam_sof_timer_setup(struct mtk_cam_ctx *ctx)
 	param.sd = ctx->seninf;
 	param.sof_cnt = atomic_read(&sensor_ctrl->sensor_request_seq_no);
 	mtk_cam_seninf_sof_notify(&param);
+
+	if (mtk_cam_scen_is_lbmf(&ctx->pipe->scen_active) &&
+		mtk_cam_scen_get_exp_num(&ctx->pipe->scen_active) > 1)
+		return;
 
 	//sensor_ctrl->sof_time = ktime_get_boottime_ns() / 1000000;
 	sensor_ctrl->sensor_deadline_timer.function =
@@ -3501,6 +3505,7 @@ int hdr_apply_cq_at_last_sof(struct mtk_raw_device *raw_dev,
 			struct mtk_camsys_ctrl_state *state_sensor,
 			struct mtk_camsys_irq_info *irq_info)
 {
+	struct mtk_camsys_sensor_ctrl *sensor_ctrl = &ctx->sensor_ctrl;
 	struct mtk_cam_working_buf_entry *buf_entry;
 	struct mtk_cam_request_stream_data *s_data;
 	struct mtk_cam_req_raw_pipe_data *s_raw_pipe_data;
@@ -3515,13 +3520,13 @@ int hdr_apply_cq_at_last_sof(struct mtk_raw_device *raw_dev,
 	if (STAGGER_CQ_LAST_SOF == 0)
 		return 0;
 	/*if db load judgment*/
-	if (ctx->sensor_ctrl.sensorsetting_wq) {
-		if (atomic_read(&ctx->sensor_ctrl.initial_drop_frame_cnt) == 0 &&
+	if (sensor_ctrl->sensorsetting_wq) {
+		if (atomic_read(&sensor_ctrl->initial_drop_frame_cnt) == 0 &&
 			irq_info->frame_idx > dequeued_frame_seq_no) {
 			dev_info(raw_dev->dev,
 				"[SOF-noDBLOAD] HW delay outer_no:%d, inner_idx:%d <= processing_idx:%d\n",
 				irq_info->frame_idx, dequeued_frame_seq_no,
-				atomic_read(&ctx->sensor_ctrl.isp_request_seq_no));
+				atomic_read(&sensor_ctrl->isp_request_seq_no));
 
 			if (ctx->component_dequeued_frame_seq_no > irq_info->frame_idx_inner) {
 				s_data = mtk_cam_get_req_s_data(ctx, ctx->stream_id,
@@ -3741,12 +3746,18 @@ int mtk_cam_hdr_last_frame_start(struct mtk_raw_device *raw_dev,
 	hdr_apply_cq_at_last_sof(raw_dev, ctx,
 		state_sensor, irq_info);
 
-	if ((irq_info->ts_ns / 1000000 - sensor_ctrl->sof_time) >
-		sensor_ctrl->timer_req_event) {
-		dev_dbg(ctx->cam->dev, "last sof over drain (SE:%llu, NE:%llu)\n",
-			irq_info->ts_ns / 1000000, sensor_ctrl->sof_time);
-		mtk_cam_submit_kwork_in_sensorctrl(
-			sensor_ctrl->sensorsetting_wq, sensor_ctrl);
+	if (mtk_cam_scen_is_lbmf(&ctx->pipe->scen_active)) {
+		if (mtk_cam_request_drained(sensor_ctrl) == 0)
+			mtk_cam_submit_kwork_in_sensorctrl(
+				sensor_ctrl->sensorsetting_wq, sensor_ctrl);
+	} else {
+		if ((irq_info->ts_ns / 1000000 - sensor_ctrl->sof_time) >
+			sensor_ctrl->timer_req_event) {
+			dev_dbg(ctx->cam->dev, "last sof over drain (SE:%llu, NE:%llu)\n",
+				irq_info->ts_ns / 1000000, sensor_ctrl->sof_time);
+			mtk_cam_submit_kwork_in_sensorctrl(
+				sensor_ctrl->sensorsetting_wq, sensor_ctrl);
+		}
 	}
 
 	return 0;
