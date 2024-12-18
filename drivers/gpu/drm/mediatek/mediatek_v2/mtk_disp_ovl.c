@@ -41,6 +41,10 @@
 #include "../mml/mtk-mml.h"
 #include <soc/mediatek/smi.h>
 
+#ifdef OPLUS_TRACKPOINT_REPORT
+#include "oplus_display_trackpoint_report.h"
+#endif
+
 int mtk_dprec_mmp_dump_ovl_layer(struct mtk_plane_state *plane_state);
 
 #define REG_FLD(width, shift)                                                  \
@@ -333,6 +337,7 @@ int mtk_dprec_mmp_dump_ovl_layer(struct mtk_plane_state *plane_state);
 #define OVL_CON_BYTE_SWAP BIT(24)
 #define OVL_CON_RGB_SWAP BIT(25)
 #define OVL_CON_MTX_JPEG_TO_RGB (4UL << 16)
+#define OVL_CON_MTX_BT709_FULL_TO_RGB (5UL << 16)
 #define OVL_CON_MTX_BT601_TO_RGB (6UL << 16)
 #define OVL_CON_MTX_BT709_TO_RGB (7UL << 16)
 #define OVL_CON_CLRFMT_RGB (1UL << 12)
@@ -1787,7 +1792,7 @@ static int mtk_ovl_color_manage(struct mtk_ddp_comp *comp, unsigned int idx,
 	u32 wcg_mask = 0, wcg_value = 0, sel_mask = 0, sel_value = 0, reg = 0;
 	enum mtk_drm_color_mode lcm_cm;
 	enum mtk_drm_dataspace lcm_ds = 0, plane_ds = 0;
-	struct mtk_panel_params *params;
+	struct mtk_panel_params *params = NULL;
 	int i;
 	int ovl_csc_en_cur = 0;
 	unsigned int ocfbn = 0;
@@ -1823,15 +1828,28 @@ static int mtk_ovl_color_manage(struct mtk_ddp_comp *comp, unsigned int idx,
 	if ((mtk_drm_helper_get_opt(priv->helper_opt, MTK_DRM_OPT_OVL_WCG) && /* WCG condition */
 		pending->enable) ||	/* WCG condition */
 	    ovl_csc_en_cur) {	/* ovl csc condition */
-		params = mtk_drm_get_lcm_ext_params(crtc);
+		//sync dx-1 patch to fixed wcg bug
+		//params = mtk_drm_get_lcm_ext_params(crtc);
 		if (params)
 			lcm_cm = params->lcm_color_mode;
 		else
 			lcm_cm = MTK_DRM_COLOR_MODE_NATIVE;
-
 		lcm_ds = mtk_ovl_map_lcm_color_mode(lcm_cm);
 		plane_ds =
 			(enum mtk_drm_dataspace)pending->prop_val[PLANE_PROP_DATASPACE];
+		if (plane_ds == MTK_DRM_DATASPACE_DISPLAY_P3) {
+			lcm_ds = MTK_DRM_DATASPACE_DISPLAY_P3;
+		}
+
+		#ifdef OPLUS_FEATURE_DISPLAY_PANELCHAPLIN
+		lcm_cm = (enum mtk_drm_color_mode)to_mtk_crtc(crtc)->blendspace;
+		lcm_ds = mtk_ovl_map_lcm_color_mode(lcm_cm);
+		if (pending->prop_val[PLANE_PROP_IS_BT2020]) {
+			//since bt2020 is not support in ovl,will replace as bt709
+			plane_ds = lcm_ds;
+		}
+		#endif
+
 		DDPDBG("%s+ idx:%d ds:0x%08x->0x%08x\n", __func__, idx, plane_ds,
 		       lcm_ds);
 
@@ -1934,12 +1952,22 @@ static int mtk_ovl_yuv_matrix_convert(enum mtk_drm_dataspace plane_ds)
 			break;
 		}
 		break;
-
-	case MTK_DRM_DATASPACE_STANDARD_BT709:
+	//P3 Must align AOSP to USE BT601 FULL range
 	case MTK_DRM_DATASPACE_STANDARD_DCI_P3:
+		ret = OVL_CON_MTX_JPEG_TO_RGB;
+		break;
+	case MTK_DRM_DATASPACE_STANDARD_BT709:
 	case MTK_DRM_DATASPACE_STANDARD_BT2020:
 	case MTK_DRM_DATASPACE_STANDARD_BT2020_CONSTANT_LUMINANCE:
-		ret = OVL_CON_MTX_BT709_TO_RGB;
+		switch (plane_ds & MTK_DRM_DATASPACE_RANGE_MASK) {
+		case MTK_DRM_DATASPACE_RANGE_UNSPECIFIED:
+		case MTK_DRM_DATASPACE_RANGE_LIMITED:
+			ret = OVL_CON_MTX_BT709_TO_RGB;
+			break;
+		default:
+			ret = OVL_CON_MTX_BT709_FULL_TO_RGB;
+			break;
+		}
 		break;
 
 	case 0:
@@ -4832,6 +4860,9 @@ static int mtk_disp_ovl_probe(struct platform_device *pdev)
 		DDPAEE("%s:%d, failed to request irq:%d ret:%d comp_id:%d\n",
 				__func__, __LINE__,
 				irq, ret, comp_id);
+#ifdef OPLUS_TRACKPOINT_REPORT
+		display_exception_trackpoint_report("DisplayDriverID@@501$$ ovl_probe error irq:%d ret:%d comp_id:%d", irq, ret, comp_id);
+#endif
 		return ret;
 	}
 

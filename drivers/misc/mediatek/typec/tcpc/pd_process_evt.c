@@ -261,6 +261,9 @@ static inline void print_event(
 		break;
 
 	case PD_EVT_TIMER_MSG:
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if(pd_event->msg != PD_TIMER_INT_INVAILD)
+#endif
 		PE_EVT_INFO("timer\n");
 		break;
 
@@ -758,11 +761,22 @@ static inline bool pe_transit_startup_state(
 {
 	uint8_t startup_state =
 		pe_get_startup_state(pd_port, pd_event);
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	int rv = 0;
+	uint32_t chip_vid = 0;
+#endif
 	if (startup_state == 0xff)
 		return false;
 
 	pd_dpm_notify_pe_startup(pd_port);
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (pd_port->tcpc != NULL) {
+		rv = tcpci_get_chip_vid(pd_port->tcpc, &chip_vid);
+		if (!rv &&  SOUTHCHIP_PD_VID == chip_vid)
+			pd_enable_timer(pd_port, PD_TIMER_INT_INVAILD);
+	}
+#endif
 	PE_TRANSIT_STATE(pd_port, startup_state);
 
 	return true;

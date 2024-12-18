@@ -623,6 +623,11 @@ static inline bool pd_process_timer_msg(
 {
 	uint8_t ready_state = pe_get_curr_ready_state(pd_port);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	int rv = 0;
+	uint32_t chip_vid = 0;
+#endif
+
 	switch (pd_event->msg) {
 	case PD_TIMER_SENDER_RESPONSE:
 
@@ -691,6 +696,13 @@ static inline bool pd_process_timer_msg(
 		break;
 #endif	/* CONFIG_USB_PD_REV30_COLLISION_AVOID */
 #endif	/* CONFIG_USB_PD_REV30 */
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	case PD_TIMER_INT_INVAILD:
+		rv = tcpci_get_chip_vid(pd_port->tcpc, &chip_vid);
+		if (!rv &&  SOUTHCHIP_PD_VID == chip_vid)
+			pd_enable_timer(pd_port, PD_TIMER_INT_INVAILD);
+#endif
 	default:
 		break;
 	}

@@ -49,11 +49,23 @@ void pe_idle1_entry(struct pd_port *pd_port)
 
 void pe_idle2_entry(struct pd_port *pd_port)
 {
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	int rv = 0;
+	uint32_t chip_vid = 0;
+#endif
 	pd_free_unexpected_event(pd_port);
 	memset(&pd_port->pe_data, 0, sizeof(struct pe_data));
 	pe_data_init(&pd_port->pe_data);
 	pd_set_rx_enable(pd_port, PD_RX_CAP_PE_IDLE);
 	pd_disable_timer(pd_port, PD_TIMER_PE_IDLE_TOUT);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (pd_port->tcpc != NULL) {
+		rv = tcpci_get_chip_vid(pd_port->tcpc, &chip_vid);
+		if (!rv &&  SOUTHCHIP_PD_VID == chip_vid)
+			pd_disable_timer(pd_port, PD_TIMER_INT_INVAILD);
+	}
+#endif
 	pd_notify_pe_idle(pd_port);
 }
 

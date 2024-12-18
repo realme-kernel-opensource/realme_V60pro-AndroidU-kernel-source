@@ -56,6 +56,11 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/migrate.h>
 
+#undef CREATE_TRACE_POINTS
+#ifndef __GENKSYMS__
+#include <trace/hooks/mm.h>
+#endif
+
 #include "internal.h"
 
 int isolate_movable_page(struct page *page, isolate_mode_t mode)
@@ -276,10 +281,14 @@ void remove_migration_ptes(struct page *old, struct page *new, bool locked)
 		.arg = old,
 	};
 
+	trace_android_vh_set_page_migrating(new);
+
 	if (locked)
 		rmap_walk_locked(new, &rwc);
 	else
 		rmap_walk(new, &rwc);
+
+	trace_android_vh_clear_page_migrating(new);
 }
 
 /*
@@ -304,6 +313,9 @@ void __migration_entry_wait(struct mm_struct *mm, pte_t *ptep,
 		goto out;
 
 	page = pfn_swap_entry_to_page(entry);
+#ifdef CONFIG_CONT_PTE_HUGEPAGE
+	CHP_BUG_ON(PageCont(page));
+#endif
 	page = compound_head(page);
 
 	/*
@@ -474,6 +486,7 @@ int migrate_page_move_mapping(struct address_space *mapping,
 		struct mem_cgroup *memcg;
 
 		memcg = page_memcg(page);
+		/* FIXME: chp lruvec no care! */
 		old_lruvec = mem_cgroup_lruvec(memcg, oldzone->zone_pgdat);
 		new_lruvec = mem_cgroup_lruvec(memcg, newzone->zone_pgdat);
 
@@ -562,6 +575,7 @@ void migrate_page_states(struct page *newpage, struct page *page)
 		SetPageChecked(newpage);
 	if (PageMappedToDisk(page))
 		SetPageMappedToDisk(newpage);
+	trace_android_vh_look_around_migrate_page(page, newpage);
 
 	/* Move dirty on pages not done by migrate_page_move_mapping() */
 	if (PageDirty(page))
@@ -990,6 +1004,11 @@ static int __unmap_and_move(struct page *page, struct page *newpage,
 
 		lock_page(page);
 	}
+
+	/* for debugging, detect the migration of subpages */
+#ifdef CONFIG_CONT_PTE_HUGEPAGE
+	CHP_BUG_ON(PageCont(page));
+#endif
 
 	if (PageWriteback(page)) {
 		/*
